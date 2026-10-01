@@ -550,7 +550,7 @@
           else if (s.canceled) tail = "The stream was canceled, so nothing more will accrue.";
           else if (t >= s.endTime) tail = "The stream has ended.";
           else tail = "The stream keeps running, so new money accrues every second.";
-          return `${amt} sent to the recipient (${shortAddr(s.recipient)}). ${tail}`;
+          return `${amt} sent to the recipient (${shortAddr(s.recipient)}). ${tail} It shows up in the recipient's balance (wallet histories often skip such internal transfers).`;
         };
       }
       busy = true;
@@ -963,7 +963,7 @@
     const title = out ? "Outgoing streams" : "Incoming streams";
     const head = pageHead(title, out
       ? "Streams you created. Paying out sends what has streamed to the recipient on their behalf."
-      : "Money streaming to you. Watch it grow and withdraw whenever you like.");
+      : "Money streaming to you. Watch it grow and withdraw whenever you like. Payouts arrive from the contract, so your balance goes up even if your wallet's history does not list them.");
     if (!state.account) {
       root.append(head, connectPrompt(out ? "Connect to see your outgoing streams" : "Connect to see your incoming streams",
         "Read-only streams can also be opened by link, no wallet needed."));
@@ -991,6 +991,9 @@
     dustBox.addEventListener("change", () => { hideDust = dustBox.checked; refreshVisibility(); });
     const emptyEl = h("div", { class: "card empty", hidden: true });
     const gapNote = h("p", { class: "hint" });
+    const dustNoteText = h("span");
+    const dustNote = h("div", { class: "dust-note", hidden: true }, dustNoteText,
+      h("button", { type: "button", class: "chip-btn", onclick: () => { dustBox.checked = false; hideDust = false; refreshVisibility(); } }, "Show"));
     const totals = counter(false);
     const totalsBox = h("div", { class: "card totals", hidden: true }, h("div", { class: "hero-label" }, "Available to withdraw now"), totals.el);
     const skeletons = [h("div", { class: "card skeleton" }), h("div", { class: "card skeleton" })];
@@ -1000,7 +1003,7 @@
       ...(out ? [] : [totalsBox]),
       h("div", { class: "list-tools" },
         h("label", { class: "inline", for: "dust" }, dustBox, "Hide dust (under 0.0001 zkLTC)"), status),
-      gapNote, emptyEl, ...skeletons, list, h("div", { style: "text-align:center;margin-top:1rem" }, moreBtn),
+      gapNote, dustNote, emptyEl, ...skeletons, list, h("div", { style: "text-align:center;margin-top:1rem" }, moreBtn),
     );
 
     const ctx = { after: () => refreshAll(true) };
@@ -1008,13 +1011,25 @@
     function refreshVisibility() {
       let shown = 0;
       let hidden = 0;
+      let hiddenWithMoney = 0;
+      let hiddenMoney = 0n;
+      const now = nowSec();
       for (const id of order) {
         const c = cards.get(id);
         const hide = hideDust && c.net < DUST;
         c.el.hidden = hide;
-        if (hide) hidden++; else shown++;
+        if (hide) {
+          hidden++;
+          const owed = withdrawableAt(c.stream, now);
+          if (owed > 0n) { hiddenWithMoney++; hiddenMoney += owed; }
+        } else shown++;
       }
       setText(status, order.length ? `${shown} shown${hidden ? ` · ${hidden} hidden as dust` : ""}` : "");
+      // Never hide money silently: tiny streams stay filtered (spam), but their balance is announced.
+      dustNote.hidden = hiddenWithMoney === 0;
+      if (hiddenWithMoney) {
+        setText(dustNoteText, `${hiddenWithMoney} small ${hiddenWithMoney === 1 ? "stream is" : "streams are"} hidden as dust but still ${hiddenWithMoney === 1 ? "has" : "have"} ${fmtRate(hiddenMoney)} zkLTC ${out ? "ready to pay out" : "for you to withdraw"}.`);
+      }
       const noneYet = order.length === 0 && nextEnd === 0 && !loading;
       const allHidden = order.length > 0 && shown === 0 && nextEnd === 0;
       emptyEl.hidden = !(noneYet || allHidden);
@@ -1285,7 +1300,8 @@
           risk("Losing the recipient key. ", "The recipient address cannot be changed. If its key is lost, the streamed money is stuck forever. The sender can only reclaim the unstreamed part, and only if the stream is cancelable."),
           risk("Time comes from the sequencer. ", "Streams run on block timestamps from the LitVM sequencer, not on your clock. Counters on this site use your device clock and re-sync with the chain, so they can differ by a second or two."),
           risk("Rounding. ", "Amounts round down until the stream ends. After the end time the recipient can withdraw exactly the full deposit."),
-          risk("Spam streams. ", "Anyone can create tiny streams to any address. The lists on this site hide “dust” (under 0.0001 zkLTC) by default."),
+          risk("Spam streams. ", "Anyone can create tiny streams to any address. The lists on this site hide “dust” (under 0.0001 zkLTC) by default, and tell you if a hidden stream still holds money for you."),
+          risk("Where payouts show up. ", "A withdrawal or payout is sent by the contract inside a transaction, as an “internal transfer”. Your balance goes up right away, but many wallets only list transactions you signed yourself. On the explorer, look at your address under “Internal txns”."),
           risk("Trust assumptions. ", "LitVM uses an AnyTrust data layer and a bridge, which add their own trust assumptions. The LitStreams contract itself has no owner, no admin, no pause, no upgrades and no fees."))),
       h("p", { class: "hint", style: "margin-top:1rem" }, "Contract: ", addrLink(cfg.contractAddress), " (source verified on the explorer)."),
     );

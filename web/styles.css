@@ -401,3 +401,6 @@ dialog p { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Notice for hidden dust streams that still hold money */
+.dust-note { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin: 0 0 1rem; padding: .7rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(245, 195, 91, .3); background: rgba(245, 195, 91, .07); color: #e9cf91; font-size: .88rem; }
