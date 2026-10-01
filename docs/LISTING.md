@@ -9,7 +9,7 @@ Copy for the **"Submit Your App"** form on [testnet.litvm.com](https://testnet.l
 | **Name** | LitStreams |
 | **Tagline** (≤ 100 characters) | Get paid in hard money, every second. Per-second zkLTC streaming on LitVM. *(74 characters)* |
 | **Category** | Payments |
-| **Website** | https://ubiquitous-chimera-7afb97.netlify.app/ |
+| **Website** | https://litstreams.site/ |
 | **Source code** | https://github.com/batatnoy-create/litstreams |
 | **Contract** | `0xB3146ab6401d69DC7EFCa457a637760d192D1fFD` ([explorer, source verified](https://liteforge.explorer.caldera.xyz/address/0xb3146ab6401d69dc7efca457a637760d192d1ffd)) |
 | **Network** | LitVM LiteForge testnet (chain ID 4441) |
@@ -36,7 +36,7 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 > You work every day but get paid once a month. What if your salary arrived every second instead?
 >
 > Building LitStreams on @[LitVM handle]: per-second zkLTC payment streams. Testnet is live 👇
-> https://ubiquitous-chimera-7afb97.netlify.app/
+> https://litstreams.site/
 
 **2. How it works**
 
@@ -53,7 +53,7 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 
 > 10-minute demo stream on LitVM testnet: watch the counter tick, withdraw mid-stream, cancel a second stream and get the rest back. All on chain, all native zkLTC.
 >
-> Try it: https://ubiquitous-chimera-7afb97.netlify.app/
+> Try it: https://litstreams.site/
 
 **4. Testnet stats** *(update the numbers before posting)*
 
@@ -70,7 +70,7 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 >
 > Grab testnet zkLTC from the LiteForge faucet, open LitStreams, and stream some to a friend. Share the stream link and they can watch it grow, no wallet needed.
 >
-> https://ubiquitous-chimera-7afb97.netlify.app/
+> https://litstreams.site/
 >
 > Testnet only. Unaudited. Feedback welcome.
 

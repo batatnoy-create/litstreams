@@ -2,9 +2,9 @@
 
 Everything below needs a human: logins, forms, posts. The copy and images are ready in this repo.
 
-## 1. Optional: nicer site address
-- [ ] Netlify → **Project configuration → General → Change project name** (for example `litstreams`).
-- [ ] If renamed: tell Claude the new URL, so README, `docs/LISTING.md` and the `og:image` tags in `web/index.html` can be updated in one commit.
+## 1. Site address
+- [x] Custom domain `litstreams.site` (Namecheap, DNS → Netlify, Let's Encrypt HTTPS). `www` and the old `*.netlify.app` address keep working.
+- [ ] Renewal: auto-renew is on in Namecheap (about $1.78/year). Keep a payment method there, or the address is lost.
 
 ## 2. Check the social preview
 - [ ] Paste the site URL into an X post draft (do not send) and check that the preview card shows `og-image.png`. If it does not, try the [X Card Validator](https://cards-dev.twitter.com/validator) or wait a few minutes for the cache.

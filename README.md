@@ -4,7 +4,7 @@
 
 **Get paid in hard money, every second.** Per-second zkLTC payment streaming on LitVM, Litecoin's EVM rollup.
 
-**Live (testnet):** https://ubiquitous-chimera-7afb97.netlify.app/
+**Live (testnet):** https://litstreams.site/
 
 > Testnet only. Unaudited. The zkLTC on LiteForge has no real value.
 

@@ -5,7 +5,7 @@ A screen recording of the live site on LiteForge testnet. No voice-over needed: 
 ## Before you record
 
 - **Two wallets** with a little testnet zkLTC: the **sender** (≥ 0.02 zkLTC) and the **recipient** (≥ 0.002 zkLTC for gas). On one device, use two browser profiles; or record the sender on the computer and the recipient on the phone.
-- Open the site in both: https://ubiquitous-chimera-7afb97.netlify.app/
+- Open the site in both: https://litstreams.site/
 - Prepare **stream #2 in advance** (for the cancel part): a 1-hour cancelable stream of 0.005 zkLTC to the recipient, created a few minutes before recording.
 - Copy the recipient address to the clipboard.
 - Recording size: 1280×720 (desktop) or a phone recording in portrait. Hide bookmarks and other tabs.
