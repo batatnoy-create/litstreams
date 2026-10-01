@@ -114,3 +114,16 @@ configured, so the commit author name is "LitStreams dev". It can be changed bef
 | Stream C | Created with a start time 10 minutes ahead and canceled right away (before start): full refund, status `Depleted` (`refunded == deposit`), as in SPEC "Edge semantics". |
 | Verification | `forge verify-contract --verifier blockscout`: fully verified (solc 0.8.24, paris, 200 runs). The first attempt failed with "not a smart contract" because the explorer indexer was ~8,600 blocks behind; the retry worked once it had indexed the block. |
 | Code check | `keccak256(eth_getCode)` matched `keccak256(forge inspect deployedBytecode)` before verification. |
+
+## M5: Frontend
+
+| Decision | Choice and why |
+| --- | --- |
+| ethers vendor | `ethers@6.17.0` UMD build (`dist/ethers.umd.min.js` from the official npm tarball), saved as `web/vendor/ethers-6.17.0.umd.min.js`. Tarball integrity matched the npm registry value (`sha512-BpyrpIPJ3ydEVow8zGaz1DuPS7YU8DcWxuBnY9a0UA/lvAPwrMr+EPXsfrul628SRaekPNeIM4UFh/91GWZang==`). SHA-256 of the vendored file: `532950515fd29ae9f7a21ceb2b68100815024d7944c3d5a92246d5b900bd703b`. Loaded from our own origin, never from a CDN. (The M4 handoff said it was already vendored; it was not, so it was added at the start of M5.) |
+| Time source in the UI | Amounts, status and counters are computed in the browser (BigInt, same formulas as the contract) from `getStream` plus the browser clock, so each card costs one RPC call instead of five. The chain remains the source of truth: every transaction re-checks on chain, and after each transaction the lists are re-read. Lists re-sync every 15 s. |
+| "Start now" | Sends `startTime = 0`, so the chain's own clock decides (no browser/chain skew). The plain-English summary shows the browser time as an approximation. |
+| Scheduled start | Must be at least 5 minutes ahead (otherwise the UI shows a message and asks the user to choose "Start now"), and at most 364 days ahead (the contract allows 365; the extra day absorbs clock skew). |
+| Cancelable default | ON in the Create form, with a one-line explanation and a summary that says CAN / CANNOT. |
+| Outgoing list | Newest first, read in pages of 25 from `sentIds`. Cancel and Renounce buttons show only when `refundableAmountOf > 0` (computed locally as `cancelable && !canceled && now < end`); "Pay out now" shows when something is withdrawable. Cancel, Renounce and Pay out ask for a native `confirm()` first, then the wallet. Label "Canceled" comes from `getStream().canceled`. "Hide dust" (default ON) measures `deposit - refunded < 0.0001 zkLTC`. |
+| Network switching | `wallet_switchEthereumChain`, falling back to `wallet_addEthereumChain` with the values from §2. The wallet provider is created with network `"any"` so a chain switch does not break ethers. Nothing is stored in localStorage. |
+| Local preview | `.claude/launch.json` at the workspace root serves `litstreams/web` on port 8765 with `python -m http.server`. It is outside the git repo. |

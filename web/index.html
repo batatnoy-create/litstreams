@@ -1,3 +1,40 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>LitStreams</title></head>
-<body><h1>LitStreams</h1><p>Coming soon.</p></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LitStreams: per-second zkLTC streaming on LitVM</title>
+  <meta name="description" content="Get paid in hard money, every second. Per-second zkLTC payment streaming on LitVM LiteForge testnet.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/create">Lit<span>Streams</span></a>
+    <nav id="nav" aria-label="Main">
+      <a href="#/create" data-route="create">Create</a>
+      <a href="#/outgoing" data-route="outgoing">Outgoing</a>
+      <a href="#/incoming" data-route="incoming">Incoming</a>
+      <a href="#/how-it-works" data-route="how-it-works">How it works</a>
+    </nav>
+    <div class="wallet">
+      <button id="connect-btn" class="btn btn-primary" type="button">Connect wallet</button>
+    </div>
+  </header>
+
+  <div id="net-banner" class="banner banner-warn" hidden></div>
+  <div class="banner banner-info">Testnet only. Unaudited. The zkLTC here has no real value.</div>
+
+  <main id="view" aria-live="polite"></main>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <footer class="footer">
+    <span>LitStreams on LitVM LiteForge testnet (chain 4441)</span>
+    <span id="footer-contract"></span>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="vendor/ethers-6.17.0.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
