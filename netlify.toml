@@ -1,2 +1,20 @@
 [build]
   publish = "web"
+
+# Security headers. Stage 1 on purpose: no script-src / connect-src restrictions yet, because some
+# mobile wallets inject their provider into the page and could break under a strict CSP (see DECISIONS.md M8).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+
+# The vendored library has a versioned file name, so it can be cached for a long time.
+[[headers]]
+  for = "/vendor/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

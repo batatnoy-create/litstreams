@@ -347,6 +347,7 @@ input.invalid { border-color: rgba(255, 123, 114, 0.6); }
 .toast.pending { border-left-color: var(--warn); }
 .toast.success { border-left-color: var(--ok); }
 .toast.error { border-left-color: var(--err); }
+.toast.warn { border-left-color: var(--warn); }
 .toast .x { position: absolute; top: 0.4rem; right: 0.5rem; background: none; border: 0; color: var(--faint); font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 0.15rem 0.3rem; border-radius: 6px; }
 .toast .x:hover { color: var(--text); background: var(--surface-2); }
 @keyframes slide-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }

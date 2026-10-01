@@ -224,7 +224,7 @@
     if (href) kids.push(" ", h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "View on explorer"));
     el.replaceChildren(...kids);
     clearTimeout(el._t);
-    if (kind !== "pending") el._t = setTimeout(() => el.remove(), kind === "error" ? 25000 : 12000);
+    if (kind !== "pending" && kind !== "warn") el._t = setTimeout(() => el.remove(), kind === "error" ? 25000 : 12000);
   }
 
   function confirmDialog({ title, body, confirm = "Confirm", danger = false }) {
@@ -251,7 +251,7 @@
     DepositTooLarge: "That amount is too large.",
     StartInPast: "The start time is already in the past. Pick a later time or start now.",
     StartTooFar: "The start time is too far in the future (the maximum is 365 days).",
-    DurationOutOfRange: "The duration must be between 1 minute and 10 years.",
+    DurationOutOfRange: "The duration must be between 1 minute and 3650 days.",
     StreamNotFound: "This stream does not exist.",
     NotSender: "Only the sender of this stream can do that.",
     NotCancelable: "This stream is not cancelable.",
@@ -305,6 +305,13 @@
     updateWalletUi();
   }
 
+  /** A view can take over wallet-change handling (Create keeps its form); otherwise the view re-renders. */
+  let walletHook = null;
+  function onWalletChanged() {
+    if (walletHook) walletHook();
+    else rerender();
+  }
+
   async function connect() {
     const eth = injected();
     if (!eth) {
@@ -314,7 +321,7 @@
     try {
       await eth.request({ method: "eth_requestAccounts" });
       await syncWallet();
-      rerender();
+      onWalletChanged();
     } catch (e) {
       toast("error", humanError(e));
     }
@@ -377,8 +384,12 @@
     } catch { /* clipboard not available */ }
   }
 
-  /** Makes sure a wallet is connected and on LitVM LiteForge. Returns false if the user must still act. */
+  /**
+   * True only if a wallet is already connected and on LitVM LiteForge. Otherwise it connects / switches and
+   * returns false, so the user reviews the (unchanged) details and clicks again: nothing is sent in that click.
+   */
   async function ensureWallet() {
+    if (state.account && state.chainId === cfg.chainId) return true;
     if (!state.account) {
       await connect();
       if (!state.account) return false;
@@ -386,18 +397,38 @@
     if (state.chainId !== cfg.chainId) {
       if (!(await switchNetwork())) return false;
     }
-    return true;
+    toast("success", "Wallet ready on LitVM LiteForge. Check the details and click again to continue.");
+    return false;
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /** Polls the public RPC for a receipt, tolerating temporary RPC errors. Returns null if none appears in time. */
+  async function waitReceipt(hash, timeoutMs = 300000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const rc = await state.rpc.getTransactionReceipt(hash);
+        if (rc) return rc;
+      } catch { /* RPC hiccup or rate limit: keep polling */ }
+      await sleep(2500);
+    }
+    return null;
   }
 
   /**
-   * Sends one contract call with pending / success / error feedback. Returns the receipt or null.
+   * Sends one contract call with pending / success / error feedback.
    * The call is simulated on the public RPC first (readable errors, gas estimate), then handed to the
    * wallet as a minimal eth_sendTransaction, and the receipt is awaited on the public RPC. This avoids
    * depending on the wallet's own RPC for anything but signing and broadcasting.
+   * Returns { rc, hash, unknown }: rc is the successful receipt (or null); unknown is true when the
+   * transaction was broadcast but its outcome could not be confirmed, so the caller must not invite a retry.
    */
   async function sendTx(label, call, done) {
-    if (!(await ensureWallet())) return null;
+    if (!(await ensureWallet())) return { rc: null, hash: null, unknown: false };
     const t = toast("pending", `${label}: preparing…`);
+    let hash = null;
+    let nonce = null;
     try {
       const data = state.read.interface.encodeFunctionData(call.fn, call.args);
       const value = call.value || 0n;
@@ -407,8 +438,16 @@
       // ticks up. LitVM (Arbitrum Nitro) only charges the base fee, so a 2x cap costs nothing extra.
       const block = await state.rpc.getBlock("latest");
       const baseFee = block && block.baseFeePerGas ? block.baseFeePerGas : (await state.rpc.getFeeData()).gasPrice;
+      // Re-check the wallet's network right before signing (the user may have switched in the meantime).
+      const walletChain = parseInt(await injected().request({ method: "eth_chainId" }), 16);
+      if (walletChain !== cfg.chainId) {
+        await syncWallet();
+        setToast(t, "error", "Your wallet is no longer on LitVM LiteForge. Switch back and try again. Nothing was sent.");
+        return { rc: null, hash: null, unknown: false };
+      }
+      nonce = await state.rpc.getTransactionCount(state.account, "pending");
       setToast(t, "pending", `${label}: confirm in your wallet…`);
-      const hash = await injected().request({
+      hash = await injected().request({
         method: "eth_sendTransaction",
         params: [{
           from: state.account,
@@ -418,20 +457,28 @@
           gas: ethers.toQuantity((gas * 13n) / 10n),
           maxFeePerGas: ethers.toQuantity(baseFee * 2n),
           maxPriorityFeePerGas: "0x0",
+          chainId: CHAIN.chainId, // wallets reject the request if they are on another network
         }],
       });
       setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(hash));
-      const rc = await state.rpc.waitForTransaction(hash, 1, 180000);
+      const rc = await waitReceipt(hash);
       if (!rc) {
-        setToast(t, "pending", `${label}: still not confirmed after 3 minutes. Check the explorer.`, txUrl(hash));
-        return null;
+        setToast(t, "warn", `${label}: sent, but not confirmed yet. Open it in the explorer before you try again.`, txUrl(hash));
+        return { rc: null, hash, nonce, unknown: true };
       }
-      if (rc.status !== 1) throw new Error("The transaction was reverted on chain.");
+      if (rc.status !== 1) {
+        setToast(t, "error", `${label}: the transaction failed on chain, so nothing changed.`, txUrl(hash));
+        return { rc: null, hash, unknown: false };
+      }
       setToast(t, "success", done ? done(rc) : `${label}: done.`, txUrl(hash));
-      return rc;
+      return { rc, hash, unknown: false };
     } catch (e) {
+      if (hash) {
+        setToast(t, "warn", `${label}: sent, but its status could not be checked. Open it in the explorer before you try again.`, txUrl(hash));
+        return { rc: null, hash, nonce, unknown: true };
+      }
       setToast(t, "error", humanError(e));
-      return null;
+      return { rc: null, hash: null, unknown: false };
     }
   }
 
@@ -496,13 +543,21 @@
         done = (rc) => {
           const ev = eventIn(rc, "Withdrawn");
           const amt = ev ? `${fmtRate(ev.args.amount)} zkLTC` : "The streamed amount";
-          return `${amt} sent to the recipient (${shortAddr(s.recipient)}). The stream keeps running, so new money accrues every second.`;
+          const paid = ev ? s.withdrawn + ev.args.amount : s.withdrawn;
+          const t = nowSec();
+          let tail;
+          if (ev && paid + s.refunded === s.deposit) tail = "The stream is now fully paid out.";
+          else if (s.canceled) tail = "The stream was canceled, so nothing more will accrue.";
+          else if (t >= s.endTime) tail = "The stream has ended.";
+          else tail = "The stream keeps running, so new money accrues every second.";
+          return `${amt} sent to the recipient (${shortAddr(s.recipient)}). ${tail}`;
         };
       }
       busy = true;
       for (const b of all) b.disabled = true;
       try {
-        if (await sendTx(label, send, done)) await ctx.after();
+        const res = await sendTx(label, send, done);
+        if (res.rc || res.unknown) await ctx.after();
       } finally {
         busy = false;
         for (const b of all) b.disabled = false;
@@ -543,6 +598,7 @@
   }
   function rerender() {
     if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
+    walletHook = null;
     const { name, arg } = parseHash();
     for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.route === name);
     const root = $("#view");
@@ -572,6 +628,21 @@
     { key: "custom", label: "Custom", sec: null },
   ];
   const UNITS = { minutes: 60, hours: 3600, days: 86400 };
+  // A create whose outcome is unknown is remembered for this tab only (sessionStorage; a public tx hash, nothing sensitive).
+  const PENDING_KEY = "litstreams.pendingCreate";
+  function savePendingCreate(p) {
+    try {
+      if (p) sessionStorage.setItem(PENDING_KEY, JSON.stringify(p));
+      else sessionStorage.removeItem(PENDING_KEY);
+    } catch { /* storage unavailable */ }
+  }
+  function loadPendingCreate() {
+    try {
+      const p = JSON.parse(sessionStorage.getItem(PENDING_KEY) || "null");
+      return p && typeof p.hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(p.hash) ? p : null;
+    } catch { return null; }
+  }
+
   const toLocalInput = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
   function viewCreate(root) {
@@ -579,6 +650,8 @@
     let startMode = "now";
     let balance = null;
     let alive = true;
+    let locked = false; // a create transaction was sent but its outcome is still unknown
+    let sending = false; // a create is in progress (wallet prompt or waiting for the receipt)
 
     const recipient = h("input", { type: "text", id: "recipient", placeholder: "0x…", autocomplete: "off", spellcheck: "false" });
     const amount = h("input", { type: "text", id: "amount", inputmode: "decimal", placeholder: "0.005", autocomplete: "off" });
@@ -677,7 +750,7 @@
       const { p, errs, ready } = readForm();
       problems.replaceChildren(...errs.map((m) => h("li", null, m)));
       problems.hidden = errs.length === 0;
-      submit.disabled = !ready;
+      submit.disabled = !ready || locked || sending;
 
       if (p.deposit && p.duration && p.recipient) {
         const startTs = p.start || nowSec();
@@ -721,31 +794,78 @@
       update();
     }
 
+    function showCreated(rc) {
+      const ev = eventIn(rc, "StreamCreated");
+      const id = ev ? ev.args.id : null;
+      result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
+        h("h2", { class: "ok" }, id != null ? `Stream #${id} created` : "Stream created"),
+        h("p", { class: "muted" }, "The recipient can now withdraw what has streamed at any time. Share the stream page so they can watch it tick."),
+        h("div", { class: "actions" },
+          id != null ? h("a", { class: "btn btn-primary btn-sm", href: `#/stream/${id}` }, "Open stream page") : null,
+          h("a", { class: "btn btn-sm", href: "#/outgoing" }, "My outgoing streams"),
+          h("a", { class: "btn btn-sm", href: txUrl(rc.hash), target: "_blank", rel: "noopener noreferrer" }, "Transaction"))));
+      refreshBalance();
+    }
+
+    /** The transaction was broadcast but not confirmed: block new submissions until its outcome is known. */
+    function showUnknown(pending) {
+      locked = true;
+      savePendingCreate(pending);
+      const status = h("p", { class: "muted small" });
+      const finish = () => { locked = false; savePendingCreate(null); update(); };
+      const check = h("button", { type: "button", class: "btn btn-primary btn-sm", onclick: async () => {
+        check.disabled = true;
+        status.textContent = "Checking…";
+        let rc = null;
+        let replaced = false;
+        try {
+          rc = await state.rpc.getTransactionReceipt(pending.hash);
+          if (!rc && pending.nonce != null && pending.account) {
+            replaced = (await state.rpc.getTransactionCount(pending.account, "latest")) > pending.nonce;
+          }
+        } catch { /* try again later */ }
+        check.disabled = false;
+        if (rc) {
+          finish();
+          if (rc.status === 1) showCreated(rc);
+          else result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
+            h("h2", { class: "err" }, "The transaction failed"), h("p", { class: "muted" }, "Nothing was created. Only the network fee was spent. You can try again.")));
+          return;
+        }
+        if (replaced) {
+          finish();
+          result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
+            h("h2", { class: "warn" }, "Replaced in your wallet"),
+            h("p", { class: "muted" }, "This transaction was sped up or canceled in your wallet, so it has a new id. Check your outgoing streams to see whether the stream was created before you try again."),
+            h("div", { class: "actions" }, h("a", { class: "btn btn-primary btn-sm", href: "#/outgoing" }, "My outgoing streams"))));
+          return;
+        }
+        status.textContent = "Still not confirmed. Check again in a minute, or look it up in the explorer.";
+      } }, "Check again");
+      result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
+        h("h2", { class: "warn" }, "Sent, waiting for confirmation"),
+        h("p", { class: "muted" }, "Your transaction was sent, but we could not confirm it yet. Do not create the stream again: check the explorer first. Creating is paused here until it is confirmed."),
+        h("div", { class: "actions" },
+          check,
+          h("a", { class: "btn btn-sm", href: txUrl(pending.hash), target: "_blank", rel: "noopener noreferrer" }, "Open in explorer")),
+        status));
+      update();
+    }
+
     submit.addEventListener("click", async () => {
       const { p, ready } = readForm();
-      if (!ready || !p.recipient) return;
-      submit.disabled = true;
-      result.replaceChildren();
-      const rc = await sendTx("Create stream", { fn: "createStream", args: [p.recipient, p.start, p.duration, p.cancelable], value: p.deposit });
-      if (rc) {
-        let id = null;
-        for (const log of rc.logs) {
-          if (log.address.toLowerCase() !== cfg.contractAddress.toLowerCase()) continue;
-          try {
-            const ev = state.read.interface.parseLog(log);
-            if (ev && ev.name === "StreamCreated") id = ev.args.id;
-          } catch { /* other event */ }
-        }
-        result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
-          h("h2", { class: "ok" }, id != null ? `Stream #${id} created` : "Stream created"),
-          h("p", { class: "muted" }, "The recipient can now withdraw what has streamed at any time. Share the stream page so they can watch it tick."),
-          h("div", { class: "actions" },
-            id != null ? h("a", { class: "btn btn-primary btn-sm", href: `#/stream/${id}` }, "Open stream page") : null,
-            h("a", { class: "btn btn-sm", href: "#/outgoing" }, "My outgoing streams"),
-            h("a", { class: "btn btn-sm", href: txUrl(rc.hash), target: "_blank", rel: "noopener noreferrer" }, "Transaction"))));
-        refreshBalance();
-      }
+      if (!ready || !p.recipient || locked || sending) return;
+      sending = true;
       update();
+      result.replaceChildren();
+      try {
+        const res = await sendTx("Create stream", { fn: "createStream", args: [p.recipient, p.start, p.duration, p.cancelable], value: p.deposit });
+        if (res.rc) showCreated(res.rc);
+        else if (res.unknown) showUnknown({ hash: res.hash, nonce: res.nonce, account: state.account });
+      } finally {
+        sending = false;
+        if (alive) update();
+      }
     });
 
     for (const el of [recipient, amount, customNum, customUnit, scheduled, cancelable]) {
@@ -774,6 +894,9 @@
     );
     update();
     refreshBalance();
+    const pendingCreate = loadPendingCreate();
+    if (pendingCreate) showUnknown(pendingCreate);
+    walletHook = () => { refreshBalance(); update(); };
     return () => { alive = false; };
   }
 
@@ -853,6 +976,10 @@
     const cards = new Map(); // id -> card
     const order = [];
     let nextEnd = 0;
+    let knownTotal = 0; // ids [0, knownTotal) are known; newer ones are picked up by loadNewer
+    let initialDone = false; // polling starts only after the first page is shown
+    let refreshing = false;
+    let loadError = null;
     let hideDust = true;
     let alive = true;
     let loading = false;
@@ -863,6 +990,7 @@
     const dustBox = h("input", { type: "checkbox", class: "switch", id: "dust", checked: true });
     dustBox.addEventListener("change", () => { hideDust = dustBox.checked; refreshVisibility(); });
     const emptyEl = h("div", { class: "card empty", hidden: true });
+    const gapNote = h("p", { class: "hint" });
     const totals = counter(false);
     const totalsBox = h("div", { class: "card totals", hidden: true }, h("div", { class: "hero-label" }, "Available to withdraw now"), totals.el);
     const skeletons = [h("div", { class: "card skeleton" }), h("div", { class: "card skeleton" })];
@@ -872,10 +1000,10 @@
       ...(out ? [] : [totalsBox]),
       h("div", { class: "list-tools" },
         h("label", { class: "inline", for: "dust" }, dustBox, "Hide dust (under 0.0001 zkLTC)"), status),
-      emptyEl, ...skeletons, list, h("div", { style: "text-align:center;margin-top:1rem" }, moreBtn),
+      gapNote, emptyEl, ...skeletons, list, h("div", { style: "text-align:center;margin-top:1rem" }, moreBtn),
     );
 
-    const ctx = { after: () => refreshAll() };
+    const ctx = { after: () => refreshAll(true) };
 
     function refreshVisibility() {
       let shown = 0;
@@ -913,6 +1041,7 @@
         if (!alive) return;
         fresh.forEach((rawId, i) => {
           const id = String(rawId);
+          if (cards.has(id)) return;
           const card = buildCard(id, mode, ctx);
           card.setData(data[i]);
           card.tick(Date.now());
@@ -921,45 +1050,84 @@
           list.append(card.el);
         });
         nextEnd = start;
+        setText(moreBtn, "Load older streams");
       } catch (e) {
-        setText(status, humanError(e));
+        loadError = humanError(e);
+        setText(moreBtn, "Retry");
       } finally {
         loading = false;
         moreBtn.disabled = false;
         moreBtn.hidden = nextEnd === 0;
         for (const sk of skeletons) sk.remove();
         if (alive) refreshVisibility();
+        if (loadError) { setText(status, loadError); loadError = null; }
       }
     }
 
-    async function refreshAll() {
+    async function refreshAll(force) {
+      if (document.hidden && !force) return; // no polling from background tabs (after a transaction: always)
+      if (!initialDone || refreshing) return; // never stack requests (matters when the RPC rate-limits)
+      refreshing = true;
       try {
-        const data = await Promise.all(order.map(fetchStream));
+        // Snapshot: loadMore / loadNewer may change `order` while the requests are in flight.
+        // Depleted streams can never change again, so they are not re-read.
+        const ids = order.filter((id) => {
+          const st = cards.get(id).stream;
+          return st.withdrawn + st.refunded !== st.deposit;
+        });
+        const data = await Promise.all(ids.map(fetchStream));
         if (!alive) return;
-        order.forEach((id, i) => cards.get(id).setData(data[i]));
-        refreshVisibility();
-      } catch { /* keep showing the last known data */ }
+        ids.forEach((id, i) => { const c = cards.get(id); if (c && data[i]) c.setData(data[i]); });
+        await loadNewer();
+        if (alive) refreshVisibility();
+      } catch { /* keep showing the last known data */ } finally {
+        refreshing = false;
+      }
+    }
+
+    /** Adds streams created since the page loaded (at most one page; reload to see a bigger burst). */
+    async function loadNewer() {
+      const total = Number(await state.read[countFn](account));
+      if (!alive || total <= knownTotal) return;
+      const from = Math.max(knownTotal, total - PAGE);
+      if (from > knownTotal) setText(gapNote, `${from - knownTotal} more new streams arrived. Reload the page to see all of them.`);
+      const ids = [...(await state.read[idsFn](account, from, total - from))];
+      const data = await Promise.all(ids.map(fetchStream));
+      if (!alive) return;
+      ids.forEach((rawId, i) => { // oldest first, each prepended, so the newest ends on top
+        const id = String(rawId);
+        if (cards.has(id)) return;
+        const card = buildCard(id, mode, ctx);
+        card.setData(data[i]);
+        card.tick(Date.now());
+        cards.set(id, card);
+        order.unshift(id);
+        list.prepend(card.el);
+      });
+      knownTotal = total;
     }
 
     (async () => {
       try {
         nextEnd = Number(await state.read[countFn](account));
+        knownTotal = nextEnd;
       } catch (e) {
         for (const sk of skeletons) sk.remove();
         setText(status, humanError(e));
         return;
       }
       if (!alive) return;
-      if (nextEnd === 0) { for (const sk of skeletons) sk.remove(); refreshVisibility(); return; }
+      if (nextEnd === 0) { for (const sk of skeletons) sk.remove(); refreshVisibility(); initialDone = true; return; }
       await loadMore();
+      initialDone = true;
     })();
 
     const stopTicker = startTicker((ms) => {
       let sum = 0n;
       for (const id of order) {
         const c = cards.get(id);
-        const avail = c.tick(ms);
-        if (!c.el.hidden) sum += avail;
+        if (c.el.hidden) continue; // dust cards are not drawn, so they are not ticked either
+        sum += c.tick(ms);
       }
       if (!out) {
         totalsBox.hidden = order.length === 0;
@@ -992,8 +1160,8 @@
       } catch (e) {
         if (!alive) return;
         root.replaceChildren(h("div", { class: "card empty" }, icon(ICONS.search),
-          h("h2", null, `Stream #${id} not found`),
-          h("p", null, humanError(e).startsWith("Transaction failed") ? "Could not load this stream. Try again in a moment." : humanError(e)),
+          h("h2", null, humanError(e) === ERROR_TEXT.StreamNotFound ? `Stream #${id} not found` : `Could not load stream #${id}`),
+          h("p", null, humanError(e) === ERROR_TEXT.StreamNotFound ? "There is no stream with this number." : "The LitVM network did not answer. Try again in a moment."),
           h("a", { class: "btn btn-primary", href: "#/create" }, "Create a stream")));
         return;
       }
@@ -1009,8 +1177,8 @@
       const bar = progressBar();
       const timeline = h("span");
       const v = {};
-      const row = (key, label, content) => { v[key] = content || h("dd"); return [h("dt", null, label), v[key]]; };
-      const actions = buildActions({ get: () => s, after: refresh });
+      const row = (key, label, content) => { v[key] = content || h("dd"); v[`${key}Dt`] = h("dt", null, label); return [v[`${key}Dt`], v[key]]; };
+      const actions = buildActions({ get: () => s, after: () => refresh(true) });
       const youTag = (a) => (state.account && state.account === a ? h("span", { class: "muted" }, " (you)") : null);
       const created = h("dd", null, "…");
       const dur = BigInt(s.endTime - s.startTime);
@@ -1035,7 +1203,7 @@
             h("dt", null, "Sender"), h("dd", null, addrLink(s.sender), youTag(s.sender)),
             h("dt", null, "Recipient"), h("dd", null, addrLink(s.recipient), youTag(s.recipient)),
             row("deposit", "Deposit"), row("withdrawn", "Withdrawn"),
-            s.canceled ? row("refunded", "Refunded to sender") : null,
+            row("refunded", "Refunded to sender"), // shown once the stream is canceled
             h("dt", null, "Rate"), h("dd", null, dur > 0n ? `${fmtRate((s.deposit * 86400n) / dur)} per day · ${fmtRate(s.deposit / dur)} per second` : "n/a"),
             h("dt", null, "Duration"), h("dd", null, fmtDuration(s.endTime - s.startTime)),
             row("cancelable", "Cancelable"),
@@ -1058,7 +1226,8 @@
         else setText(timeline, `Ended ${fmtDuration(now - s.endTime)} ago`);
         setText(v.deposit, `${fmt(s.deposit, 6)} zkLTC`);
         setText(v.withdrawn, `${fmtRate(s.withdrawn)} zkLTC`);
-        if (v.refunded) setText(v.refunded, `${fmt(s.refunded, 6)} zkLTC`);
+        v.refunded.hidden = v.refundedDt.hidden = !s.canceled;
+        if (s.canceled) setText(v.refunded, `${fmt(s.refunded, 6)} zkLTC`);
         const refundable = refundableAt(s, now);
         setText(v.cancelable, s.canceled ? "Canceled" : refundable > 0n ? "Yes, the sender can still cancel" : s.cancelable ? "No longer (stream ended)" : "No (final)");
         actions.update(s, now);
@@ -1067,16 +1236,24 @@
       stopTicker = startTicker(render);
       sync = setInterval(refresh, 15000);
 
-      // Best effort: find the creation transaction from the StreamCreated event.
-      state.read.queryFilter(state.read.filters.StreamCreated(id), cfg.deployBlock, "latest")
-        .then((logs) => {
-          if (!alive || !logs.length) { created.textContent = "n/a"; return; }
+      // The creation transaction is looked up only on request: eth_getLogs over the whole chain history is
+      // the heaviest call the app could make, and public RPCs cap its block range.
+      const findBtn = h("button", { type: "button", class: "chip-btn", onclick: async () => {
+        created.textContent = "Searching…";
+        try {
+          const logs = await state.read.queryFilter(state.read.filters.StreamCreated(id), cfg.deployBlock, "latest");
+          if (!alive) return;
+          if (!logs.length) throw new Error("not found");
           created.replaceChildren(h("a", { class: "mono", href: txUrl(logs[0].transactionHash), target: "_blank", rel: "noopener noreferrer" }, `tx ${shortAddr(logs[0].transactionHash)}`));
-        })
-        .catch(() => { if (alive) created.textContent = "n/a"; });
+        } catch {
+          if (alive) created.replaceChildren(h("a", { href: `${cfg.explorer}/address/${cfg.contractAddress}?tab=logs`, target: "_blank", rel: "noopener noreferrer" }, "See the contract's events on the explorer"));
+        }
+      } }, "Find");
+      created.replaceChildren(findBtn);
     }
 
-    async function refresh() {
+    async function refresh(force) {
+      if (document.hidden && !force) return; // no polling from background tabs (after a transaction: always)
       try {
         const next = await fetchStream(id);
         if (alive) s = next;
@@ -1132,8 +1309,8 @@
 
     const eth = injected();
     if (eth && eth.on) {
-      eth.on("accountsChanged", async () => { await syncWallet(); rerender(); });
-      eth.on("chainChanged", async () => { await syncWallet(); rerender(); });
+      eth.on("accountsChanged", async () => { await syncWallet(); onWalletChanged(); });
+      eth.on("chainChanged", async () => { await syncWallet(); onWalletChanged(); });
     }
     await syncWallet();
     window.addEventListener("hashchange", rerender);
