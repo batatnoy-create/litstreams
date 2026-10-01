@@ -398,10 +398,22 @@
       const value = call.value || 0n;
       const req = { from: state.account, to: cfg.contractAddress, data, value };
       const gas = await state.rpc.estimateGas(req); // reverts here with a decodable custom error
+      // Some wallets set maxFeePerGas exactly at the current base fee, which fails as soon as the base fee
+      // ticks up. LitVM (Arbitrum Nitro) only charges the base fee, so a 2x cap costs nothing extra.
+      const block = await state.rpc.getBlock("latest");
+      const baseFee = block && block.baseFeePerGas ? block.baseFeePerGas : (await state.rpc.getFeeData()).gasPrice;
       setToast(t, "pending", `${label}: confirm in your wallet…`);
       const hash = await injected().request({
         method: "eth_sendTransaction",
-        params: [{ from: state.account, to: cfg.contractAddress, data, value: ethers.toQuantity(value), gas: ethers.toQuantity((gas * 13n) / 10n) }],
+        params: [{
+          from: state.account,
+          to: cfg.contractAddress,
+          data,
+          value: ethers.toQuantity(value),
+          gas: ethers.toQuantity((gas * 13n) / 10n),
+          maxFeePerGas: ethers.toQuantity(baseFee * 2n),
+          maxPriorityFeePerGas: "0x0",
+        }],
       });
       setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(hash));
       const rc = await state.rpc.waitForTransaction(hash, 1, 180000);
