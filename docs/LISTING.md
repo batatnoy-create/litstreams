@@ -21,6 +21,13 @@ Copy for the **"Submit Your App"** form on [testnet.litvm.com](https://testnet.l
 
 LitStreams lets anyone stream native zkLTC to anyone, second by second. A sender locks zkLTC for one recipient with a start time and a duration; from then on the recipient's balance grows every second and can be withdrawn at any moment. Streams can be cancelable (the sender can stop them and take back what has not streamed yet) or permanent. Use it for salaries, freelancer retainers, contributor grants and subscriptions paid in advance. One small, verified contract with no owner, no admin, no fees, no upgrades and no token. Anyone can open a stream's page by link, without a wallet, and watch it tick. Testnet only and unaudited.
 
+### Directory form (testnet.litvm.com → Submit Your App, as of 2026-10-01)
+
+The form asks: project name, website, **project X handle** (required), category (free text), **description of at most 120 characters**, "actively deployed on LitVM testnet?", whether you joined the LitVM Telegram group (t.me/litecoinvm), and **your personal Telegram handle**. After submitting, message **@DrZuler** on Telegram to confirm.
+
+- Description (111 characters): `Stream native zkLTC by the second. Salaries, retainers and grants that pay out every second. No fees, no admin.`
+- Category: `DeFi / Payments` (the directory filters are Infrastructure, DeFi, NFT, Social & Gaming, RWA & AI).
+
 ### One-liner (for tight fields)
 
 Per-second zkLTC payment streams on LitVM: lock once, the recipient gets paid every second.
@@ -35,7 +42,7 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 >
 > You work every day but get paid once a month. What if your salary arrived every second instead?
 >
-> Building LitStreams on @[LitVM handle]: per-second zkLTC payment streams. Testnet is live 👇
+> Building LitStreams on @litecoinvm: per-second zkLTC payment streams. Testnet is live 👇
 > https://litstreams.site/
 
 **2. How it works**
@@ -75,5 +82,5 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 > Testnet only. Unaudited. Feedback welcome.
 
 Notes:
-- Tagging: replace `@[LitVM handle]` with LitVM's official X account (linked from testnet.litvm.com / docs.litvm.com).
+- Tagging: `@litecoinvm` is LitVM's official X account (linked from testnet.litvm.com).
 - Do not use Litecoin or LitVM logos in images unless their brand kit allows it (docs.litvm.com/other-resources/branding). The LitStreams images in `web/assets/` are original.

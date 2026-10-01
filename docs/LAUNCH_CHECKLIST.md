@@ -18,10 +18,10 @@ Everything below needs a human: logins, forms, posts. The copy and images are re
 ## 4. X (Twitter)
 - [ ] Optional project account: profile picture `web/assets/logo-512.png`, header `web/assets/x-banner-1500x500.png`, bio: *Get paid in hard money, every second. Per-second zkLTC streaming on LitVM (testnet).* + the site link.
 - [ ] Record the demo video (`docs/DEMO_SCRIPT.md`).
-- [ ] Post the 5 drafts from `docs/LISTING.md`, one per day or as a thread. Replace `@[LitVM handle]` and refresh the numbers in post #4 first.
+- [ ] Post the 5 drafts from `docs/LISTING.md`, one per day or as a thread. Refresh the numbers in post #4 first.
 
 ## 5. GitHub polish (2 minutes)
-- [ ] On https://github.com/batatnoy-create/litstreams → ⚙️ next to **About**: description *Per-second zkLTC payment streaming on LitVM (testnet)*, website = the site URL, topics `litvm`, `litecoin`, `payments`, `streaming`, `solidity`, `foundry`.
+- [x] (done 2026-10-01) On https://github.com/batatnoy-create/litstreams → ⚙️ next to **About**: description *Per-second zkLTC payment streaming on LitVM (testnet)*, website = the site URL, topics `litvm`, `litecoin`, `payments`, `streaming`, `solidity`, `foundry`.
 
 ## 6. Keep in mind
 - Testnet only. Do not promise mainnet: that needs an external audit first (see `docs/SECURITY.md`).
