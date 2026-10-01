@@ -7,7 +7,7 @@ Everything below needs a human: logins, forms, posts. The copy and images are re
 - [ ] Renewal: auto-renew is on in Namecheap (about $1.78/year). Keep a payment method there, or the address is lost.
 
 ## 2. Check the social preview
-- [ ] Paste the site URL into an X post draft (do not send) and check that the preview card shows `og-image.png`. If it does not, try the [X Card Validator](https://cards-dev.twitter.com/validator) or wait a few minutes for the cache.
+- [x] (2026-10-01: the card shows correctly on X.) Paste the site URL into an X post draft (do not send) and check that the preview card shows `og-image.png`. If it does not, try the [X Card Validator](https://cards-dev.twitter.com/validator) or wait a few minutes for the cache.
 
 ## 3. Submit to the LitVM directory
 - [ ] Open https://testnet.litvm.com → **Submit Your App**.
