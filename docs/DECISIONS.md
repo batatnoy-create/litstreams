@@ -101,3 +101,16 @@ The last three are caught by the invariant suite alone. Before M3, the first fiv
 
 Git: the first commit (`d9c03d2`, a baseline before M3) was made with the user's approval. Git had no `user.name`
 configured, so the commit author name is "LitStreams dev". It can be changed before pushing to GitHub.
+
+## M4: Testnet deployment
+
+| Decision | Choice and why |
+| --- | --- |
+| Deployer | The fresh "sender" test wallet, via `forge script`. The user's main wallet key stays out of `.env` (it controls real assets on other chains; a plaintext key on disk is a risk with no on-chain benefit, since the contract has no owner). The user may link the deployer address to their identity in the listing. |
+| Remix attempt | Deploying from the main wallet through Remix + MetaMask failed before broadcast ("Interaction failed", no tx id, no funds spent). Not pursued further. |
+| Second wallet funding | The faucet refused a second wallet (about 0.06 zkLTC per day). The recipient got 0.004 zkLTC from the sender instead (tx `0x33cf39f3f3a6eba265643768d7626a6a795d47070abe9b2c6870e39955317e4d`). |
+| Stream amounts | 0.005 zkLTC per stream instead of the brief's 0.01-0.05, because the faucet gives little. |
+| Lifecycle runner | `script/run-lifecycle.sh` uses `cast send`, not `forge script`. LitVM only produces blocks when there are transactions, so `forge script` simulates against a stale `block.timestamp` and would revert timed calls. The user gave one explicit approval for the whole A/B/C list with exact amounts. |
+| Stream C | Created with a start time 10 minutes ahead and canceled right away (before start): full refund, status `Depleted` (`refunded == deposit`), as in SPEC "Edge semantics". |
+| Verification | `forge verify-contract --verifier blockscout`: fully verified (solc 0.8.24, paris, 200 runs). The first attempt failed with "not a smart contract" because the explorer indexer was ~8,600 blocks behind; the retry worked once it had indexed the block. |
+| Code check | `keccak256(eth_getCode)` matched `keccak256(forge inspect deployedBytecode)` before verification. |

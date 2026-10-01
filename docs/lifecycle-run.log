@@ -1,0 +1,21 @@
+[17:20:27] Contract 0xB3146ab6401d69DC7EFCa457a637760d192D1fFD | sender 0x38D58184791De33f3935Eb32B503de6F5Bca1CAe | recipient 0xb14991cf0AB9Fa866BDdF0e3FB9426C3600912ae
+[17:20:27] recipient balance before: 0.004000000000000000
+[17:20:29] A create | tx 0x53e95433c8c0eba89defbbe084b428833ef9b1f5db6a20a720eb568d37bff34e | block 56606261 | status 1
+[17:20:31] B create | tx 0x32e19054dcec0a94558ef3b942a055e23b41b7c4ce665b7f898a1cc54763e92c | block 56606268 | status 1
+[17:20:33] B renounce | tx 0x51c2cb970d9faa88e750bf8795c8d63432b310f79b4f05b4dd7142e087121a6f | block 56606275 | status 1
+[17:20:35] C create (start 1790865033) | tx 0xfe33984fec23769f1d38210d038c75b438084cfdce0e53660e70fc20fa34e578 | block 56606283 | status 1
+[17:20:36] C status before cancel (0=Pending): 0
+[17:20:38] C cancel (before start) | tx 0x89cad0bd8700ddb16cf48d9c89f58f02649dc3e790e7cbaa367c47596b693635 | block 56606296 | status 1
+[17:20:39] C getStream refunded/status after cancel: status=4
+[17:23:37] A status (1=Streaming): 1 | withdrawable: 1566666666666666 [1.566e15]
+[17:23:39] A withdrawMax by recipient | tx 0x0274a93c41a6fbd85d6a61d15b532682fff6c6575e746c16aab659e04a474a0a | block 56607008 | status 1
+[17:25:35] A refundable before cancel: 2450000000000000 [2.45e15]
+[17:25:37] A cancel by sender | tx 0x2f4a0bd8e93f1e3f1565cde2a48efe8eaf7b9560eac57bc14e9dd029b44eb844 | block 56607475 | status 1
+[17:25:39] A status after cancel (3=Canceled): 3
+[17:25:40] A withdrawMax rest by recipient | tx 0x40af0c661b81161883f9862f714e5af25ea785805221df5c71bf64896d2318c2 | block 56607487 | status 1
+[17:25:41] A status final (4=Depleted): 4
+[17:25:44] B withdrawMax by SENDER | tx 0x830622bc4794698854ed0c897ba1ed000ba2ef401763ff393656edfd1f6b19a1 | block 56607501 | status 1
+[17:25:44] B recipient balance delta (wei): 5000000000000000 (expected 5000000000000000)
+[17:25:45] B status final (4=Depleted): 4
+[17:25:46] sender balance: 0.036612147119936334 | recipient balance: 0.011506927929366666
+[17:25:46] DONE
