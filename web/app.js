@@ -145,11 +145,16 @@
 
   /* ---------- live ticker and counters ---------- */
 
+  /** Calls fn about 30 times per second while the page is visible. An error never stops the loop. */
   function startTicker(fn) {
     let on = true;
-    const loop = () => {
+    let last = 0;
+    const loop = (t) => {
       if (!on) return;
-      fn(Date.now());
+      if (t - last >= 33) {
+        last = t;
+        try { fn(Date.now()); } catch (e) { console.error("ticker", e); }
+      }
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
@@ -457,7 +462,7 @@
         send = (c) => c.withdrawMax(id);
         done = (rc) => {
           const ev = eventIn(rc, "Withdrawn");
-          const amt = ev ? `${fmt(ev.args.amount, 6)} zkLTC` : "The streamed amount";
+          const amt = ev ? `${fmtRate(ev.args.amount)} zkLTC` : "The streamed amount";
           return `${amt} sent to the recipient (${shortAddr(s.recipient)}). The stream keeps running, so new money accrues every second.`;
         };
       }
@@ -776,7 +781,7 @@
           setText(v.end, fmtDate(s.endTime));
         }
         setText(v.deposit, `${fmt(s.deposit)} zkLTC`);
-        setText(v.withdrawn, `${fmt(s.withdrawn, 6)} zkLTC`);
+        setText(v.withdrawn, `${fmtRate(s.withdrawn)} zkLTC`);
       },
       tick(ms) {
         const now = Math.floor(ms / 1000);
@@ -785,7 +790,7 @@
         const label = statusLabel(s, now);
         badge.set(label);
         lock.hidden = s.cancelable || s.canceled;
-        setText(v.ready, `${fmt(avail, 6)} zkLTC`);
+        setText(v.ready, `${fmtRate(avail)} zkLTC`);
         hero.set(out ? streamed : avail);
         bar.set(s, streamed, label === "Streaming");
         const refundable = refundableAt(s, now);
@@ -1019,7 +1024,7 @@
         else if (now < s.endTime) setText(timeline, `Ends in ${fmtDuration(s.endTime - now)}`);
         else setText(timeline, `Ended ${fmtDuration(now - s.endTime)} ago`);
         setText(v.deposit, `${fmt(s.deposit, 6)} zkLTC`);
-        setText(v.withdrawn, `${fmt(s.withdrawn, 6)} zkLTC`);
+        setText(v.withdrawn, `${fmtRate(s.withdrawn)} zkLTC`);
         if (v.refunded) setText(v.refunded, `${fmt(s.refunded, 6)} zkLTC`);
         const refundable = refundableAt(s, now);
         setText(v.cancelable, s.canceled ? "Canceled" : refundable > 0n ? "Yes, the sender can still cancel" : s.cancelable ? "No longer (stream ended)" : "No (final)");

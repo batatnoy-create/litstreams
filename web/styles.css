@@ -38,7 +38,6 @@ body {
     radial-gradient(1100px 560px at 50% -220px, rgba(141, 180, 255, 0.13), transparent 62%),
     radial-gradient(700px 420px at 100% 0, rgba(207, 216, 230, 0.06), transparent 60%),
     var(--bg);
-  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -394,6 +393,9 @@ dialog p { color: var(--muted); }
   .sc-party { margin-left: 0; width: 100%; }
   .dl { grid-template-columns: 1fr; gap: 0.1rem; }
   .dl dd { margin-bottom: 0.7rem; }
+}
+@media (min-width: 861px) {
+  body { background-attachment: fixed; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
