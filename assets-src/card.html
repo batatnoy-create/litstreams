@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- Source for the OG image (?v=og, 1200x630) and the X banner (?v=banner, 1500x500).
+     Rendered with headless Chrome by assets-src/render.sh. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 100vw; height: 100vh; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", Inter, system-ui, sans-serif;
+    color: #eef1f6;
+    background:
+      radial-gradient(900px 520px at 18% -10%, rgba(141, 180, 255, 0.20), transparent 62%),
+      radial-gradient(700px 500px at 100% 110%, rgba(207, 216, 230, 0.08), transparent 60%),
+      #06080b;
+    display: flex;
+    align-items: center;
+    -webkit-font-smoothing: antialiased;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at 70% 50%, #000 0%, transparent 70%);
+  }
+  .wrap { position: relative; width: 100%; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 18px; }
+  .brand img { width: 72px; height: 72px; }
+  .brand span { font-size: 40px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand b { color: #c5cfde; font-weight: 600; }
+  h1 {
+    font-weight: 700; letter-spacing: -0.03em; line-height: 1.04;
+    background: linear-gradient(180deg, #ffffff 25%, #9aa7ba 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { color: #8b95a7; }
+  .pills { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill { padding: 7px 16px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.04); color: #c5cfde; font-size: 19px; font-weight: 500; }
+  .card {
+    background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025));
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 24px;
+    padding: 30px 34px;
+    box-shadow: 0 30px 70px -30px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06) inset;
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .id { font-weight: 700; font-size: 22px; }
+  .badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px; border-radius: 999px; font-size: 15px; font-weight: 650; color: #4ade9a; border: 1px solid rgba(74,222,154,.35); background: rgba(74,222,154,.08); }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #4ade9a; box-shadow: 0 0 0 4px rgba(74,222,154,.18); }
+  .label { margin-top: 22px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #596273; font-weight: 650; }
+  .num { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -0.025em; white-space: nowrap; }
+  .num .dim { color: #596273; font-weight: 500; }
+  .num .unit { color: #8b95a7; font-weight: 500; font-size: .45em; margin-left: 10px; letter-spacing: 0; }
+  .bar { position: relative; height: 10px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; margin: 20px 0 14px; }
+  .bar i { position: absolute; inset: 0 auto 0 0; border-radius: 999px; }
+  .bar .s { width: 62%; background: linear-gradient(90deg, #5f8fe8, #cfd8e6); box-shadow: 0 0 18px rgba(141,180,255,.6); }
+  .bar .w { width: 35%; background: rgba(255,255,255,.92); }
+  .meta { display: flex; justify-content: space-between; color: #8b95a7; font-size: 15px; }
+  .url { color: #8db4ff; font-weight: 600; }
+
+  /* OG 1200x630 */
+  body.og .wrap { padding: 0 72px; }
+  body.og .left { width: 560px; }
+  body.og h1 { font-size: 64px; margin-top: 44px; }
+  body.og .sub { font-size: 24px; margin-top: 18px; }
+  body.og .pills { margin-top: 30px; }
+  body.og .card { width: 470px; }
+  body.og .num { font-size: 50px; }
+
+  /* X banner 1500x500: keep the bottom-left corner light (profile photo sits there) */
+  body.banner .wrap { padding: 0 90px 0 520px; }
+  body.banner .brand { display: none; }
+  body.banner .left { width: 470px; }
+  body.banner h1 { font-size: 54px; }
+  body.banner .sub { font-size: 22px; margin-top: 16px; }
+  body.banner .pills { margin-top: 24px; }
+  body.banner .card { width: 380px; padding: 26px 28px; }
+  body.banner .num { font-size: 40px; }
+  body.banner .mark { position: absolute; left: 70px; top: 70px; display: flex; align-items: center; gap: 16px; }
+  body.banner .mark img { width: 64px; height: 64px; }
+  body.banner .mark span { font-size: 34px; font-weight: 600; }
+  body.banner .mark b { color: #c5cfde; font-weight: 600; }
+  body.og .mark { display: none; }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="mark"><img src="logo.svg" alt=""><span>Lit<b>Streams</b></span></div>
+  <div class="wrap">
+    <div class="left">
+      <div class="brand"><img src="logo.svg" alt=""><span>Lit<b>Streams</b></span></div>
+      <h1>Get paid in hard money, every second.</h1>
+      <p class="sub">Per-second zkLTC payment streaming on LitVM.</p>
+      <div class="pills"><span class="pill">Native zkLTC</span><span class="pill">No fees</span><span class="pill">No admin</span></div>
+    </div>
+    <div class="card">
+      <div class="row"><span class="id">#1</span><span class="badge">Streaming</span></div>
+      <div class="label">Available to withdraw</div>
+      <div class="num">0.0124<span class="dim">8391</span><span class="unit">zkLTC</span></div>
+      <div class="bar"><i class="s"></i><i class="w"></i></div>
+      <div class="meta"><span>Ends in 11 d 9 h</span><span class="url">Testnet</span></div>
+    </div>
+  </div>
+  <script>document.body.className = new URLSearchParams(location.search).get("v") || "og";</script>
+</body>
+</html>

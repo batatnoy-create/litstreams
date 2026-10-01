@@ -135,3 +135,14 @@ configured, so the commit author name is "LitStreams dev". It can be changed bef
 | Logo | `web/assets/logo.svg` and `favicon.svg`: three flowing bars on a dark rounded square, silver gradient with an ice-blue dot. Original artwork. PNG exports and banners come in M7. |
 | Sending transactions | After a real-wallet failure on iPhone ("could not coalesce error" from ethers' wallet signer while the same calls estimated fine on the public RPC), transactions no longer go through ethers' `JsonRpcSigner`. The call is encoded locally, simulated with `estimateGas` on the public RPC (gives readable custom errors and a gas limit, +30%), sent to the wallet as a minimal `eth_sendTransaction` (`from`, `to`, `data`, `value`, `gas`), and the receipt is awaited on the public RPC (3 min timeout). The wallet is used only to sign and broadcast. Unknown wallet errors now show the wallet's inner message. Verified end to end (create, pay out, cancel) against a local anvil fork of LiteForge (`--hardfork shanghai`, auto-impersonation); nothing was broadcast to the real chain. |
 | Fee cap | The iPhone wallet then reported "max fee per gas less than block base fee" (it set `maxFeePerGas` exactly at a base fee that had just risen). The site now sends `maxFeePerGas = 2 × latest base fee` and `maxPriorityFeePerGas = 0`. Arbitrum Nitro charges only the base fee, so the cap costs nothing extra. Re-tested on the anvil fork. |
+
+## M7: Launch kit
+
+| Decision | Choice and why |
+| --- | --- |
+| Logo | Redesigned for launch: a silver coin ring with an ice-blue core and three flow lines leaving it ("money streaming out of a coin"), on a dark rounded square. Original artwork; no Litecoin or LitVM marks, so no brand-kit dependency. Header, favicon, `logo-512.png` (transparent corners) all use it. |
+| Image pipeline | Images are HTML/SVG sources in `assets-src/` rendered to PNG with headless Chrome (`render.sh`, throwaway profile). No design tools or external services; anyone can re-render after a text change. |
+| OG / X banner | 1200×630 and 1500×500 with the tagline and an illustrative stream card. The banner keeps the bottom-left free for the X profile photo. `og:image` and `twitter:card` tags point to the absolute Netlify URL, so they must be updated if the site is renamed. |
+| README screenshot | Rendered from the real site with a mock connected wallet and a pre-filled form (no transaction), `docs/img/screenshot-create.png`. |
+| Slow rates | Rates below 0.00000001 zkLTC/s now show three significant digits (for example `0.00000000385`) instead of `<0.00000001`. |
+| X handle | The drafts use the placeholder `@[LitVM handle]` instead of guessing LitVM's official account. |

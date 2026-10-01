@@ -1,3 +1,5 @@
+<p align="center"><img src="web/assets/logo-512.png" width="96" height="96" alt="LitStreams logo"></p>
+
 # LitStreams
 
 **Get paid in hard money, every second.** Per-second zkLTC payment streaming on LitVM, Litecoin's EVM rollup.
@@ -11,6 +13,10 @@
 | Network | LitVM LiteForge testnet, chain ID `4441` |
 | Contract | [`0xB3146ab6401d69DC7EFCa457a637760d192D1fFD`](https://liteforge.explorer.caldera.xyz/address/0xb3146ab6401d69dc7efca457a637760d192d1ffd) (source verified) |
 | Source | `contracts/LitStreams.sol` (Solidity 0.8.24, `paris`) |
+
+![LitStreams: create a stream](docs/img/screenshot-create.png)
+
+**Use cases:** salaries, freelancer retainers, contributor grants, subscriptions paid in advance.
 
 ## How it works
 
@@ -49,6 +55,9 @@ python -m http.server 8765 --directory web
 - [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md): deployment, verification and on-chain test transactions
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): every judgment call
 - [`docs/SECURITY.md`](docs/SECURITY.md): threat model and limitations
+- [`docs/LISTING.md`](docs/LISTING.md), [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md), [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md): launch kit
+
+Images (`web/assets/`: logo, OG image, X banner) are original artwork; their sources are in `assets-src/` and are rendered with `assets-src/render.sh` (headless Chrome).
 
 ## License
 

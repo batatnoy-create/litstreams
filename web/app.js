@@ -69,7 +69,12 @@
   }
   function fmtRate(wei) {
     let s = fmt(wei, 8);
-    if (s.startsWith("<")) return s;
+    if (s.startsWith("<")) {
+      // Very slow rates: show the first 3 significant digits instead of "<0.00000001".
+      const [, f = ""] = ethers.formatEther(wei).split(".");
+      const lead = f.match(/^0*/)[0].length;
+      return `0.${f.slice(0, lead + 3)}`;
+    }
     s = s.replace(/0+$/, "");
     const dec = (s.split(".")[1] || "").length;
     return dec < 4 ? s + "0".repeat(4 - dec) : s;

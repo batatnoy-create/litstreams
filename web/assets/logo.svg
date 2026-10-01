@@ -1,17 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f6f9fd"/>
-      <stop offset="1" stop-color="#8e9bb0"/>
+    <linearGradient id="ls-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181d27"/>
+      <stop offset="1" stop-color="#07090c"/>
     </linearGradient>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#151a22"/>
-      <stop offset="1" stop-color="#0a0d12"/>
+    <radialGradient id="ls-glow" cx=".28" cy=".22" r=".9">
+      <stop offset="0" stop-color="#8db4ff" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#8db4ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ls-coin" x1="12" y1="20" x2="36" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".55" stop-color="#c9d2df"/>
+      <stop offset="1" stop-color="#7d8aa0"/>
+    </linearGradient>
+    <linearGradient id="ls-flow" x1="36" y1="0" x2="58" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dfe6ef"/>
+      <stop offset=".6" stop-color="#8db4ff" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#8db4ff" stop-opacity=".15"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
-  <rect x=".5" y=".5" width="63" height="63" rx="15.5" fill="none" stroke="#fff" stroke-opacity=".14"/>
-  <path d="M15 22h22M15 32h34M15 42h16" stroke="url(#g)" stroke-width="5" stroke-linecap="round" fill="none"/>
-  <circle cx="47" cy="22" r="3.6" fill="#8db4ff"/>
-  <circle cx="49" cy="42" r="2.2" fill="#8db4ff" fill-opacity=".55"/>
+  <rect width="64" height="64" rx="15" fill="url(#ls-bg)"/>
+  <rect width="64" height="64" rx="15" fill="url(#ls-glow)"/>
+  <rect x=".5" y=".5" width="63" height="63" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".14"/>
+  <circle cx="24" cy="32" r="11" fill="none" stroke="url(#ls-coin)" stroke-width="5"/>
+  <circle cx="24" cy="32" r="3.2" fill="#8db4ff"/>
+  <path d="M39 25.5h14M41 32h16M39 38.5h10" stroke="url(#ls-flow)" stroke-width="3.6" stroke-linecap="round" fill="none"/>
 </svg>
