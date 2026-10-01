@@ -2,31 +2,51 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#06080b">
   <title>LitStreams: per-second zkLTC streaming on LitVM</title>
-  <meta name="description" content="Get paid in hard money, every second. Per-second zkLTC payment streaming on LitVM LiteForge testnet.">
+  <meta name="description" content="Get paid in hard money, every second. Per-second zkLTC payment streaming on the LitVM LiteForge testnet.">
+  <meta property="og:title" content="LitStreams: get paid in hard money, every second">
+  <meta property="og:description" content="Per-second zkLTC payment streaming on LitVM. Testnet only.">
+  <meta property="og:type" content="website">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/create">Lit<span>Streams</span></a>
-    <nav id="nav" aria-label="Main">
-      <a href="#/create" data-route="create">Create</a>
-      <a href="#/outgoing" data-route="outgoing">Outgoing</a>
-      <a href="#/incoming" data-route="incoming">Incoming</a>
-      <a href="#/how-it-works" data-route="how-it-works">How it works</a>
-    </nav>
-    <div class="wallet">
-      <button id="connect-btn" class="btn btn-primary" type="button">Connect wallet</button>
+    <div class="topbar-in">
+      <a class="brand" href="#/create" aria-label="LitStreams home">
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6f9fd"/><stop offset="1" stop-color="#8e9bb0"/></linearGradient>
+            <linearGradient id="lb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#151a22"/><stop offset="1" stop-color="#0a0d12"/></linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="16" fill="url(#lb)"/>
+          <rect x=".5" y=".5" width="63" height="63" rx="15.5" fill="none" stroke="#fff" stroke-opacity=".14"/>
+          <path d="M15 22h22M15 32h34M15 42h16" stroke="url(#lg)" stroke-width="5" stroke-linecap="round" fill="none"/>
+          <circle cx="47" cy="22" r="3.6" fill="#8db4ff"/><circle cx="49" cy="42" r="2.2" fill="#8db4ff" fill-opacity=".55"/>
+        </svg>
+        <span>Lit<b>Streams</b></span>
+      </a>
+      <nav id="nav" aria-label="Main">
+        <a href="#/create" data-route="create"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Create</span></a>
+        <a href="#/outgoing" data-route="outgoing"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg><span>Outgoing</span></a>
+        <a href="#/incoming" data-route="incoming"><svg viewBox="0 0 24 24"><path d="M17 7 7 17M16 17H7V8"/></svg><span>Incoming</span></a>
+        <a href="#/how-it-works" data-route="how-it-works"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>How it works</span></a>
+      </nav>
+      <div class="wallet">
+        <button id="connect-btn" class="btn btn-primary" type="button">Connect wallet</button>
+      </div>
     </div>
   </header>
 
-  <div id="net-banner" class="banner banner-warn" hidden></div>
-  <div class="banner banner-info">Testnet only. Unaudited. The zkLTC here has no real value.</div>
+  <div class="strip"><span class="tag">TESTNET</span><span>Unaudited. The zkLTC here has no real value.</span></div>
+  <div id="net-banner" class="banner" hidden></div>
 
   <main id="view" aria-live="polite"></main>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" aria-modal="true"></dialog>
 
   <footer class="footer">
     <span>LitStreams on LitVM LiteForge testnet (chain 4441)</span>

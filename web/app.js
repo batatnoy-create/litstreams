@@ -15,20 +15,14 @@
   };
 
   const DUST = 10n ** 14n; // 0.0001 zkLTC
+  const GAS_RESERVE = 3n * 10n ** 15n; // kept back by the "Max" button
   const PAGE = 25;
   const MIN_SCHEDULE_AHEAD = 300; // scheduled starts must be at least 5 minutes ahead
   const MAX_SCHEDULE_AHEAD = 364 * 86400; // contract allows 365 days; keep a day of clock-skew margin
   const MIN_DURATION = 60;
   const MAX_DURATION = 3650 * 86400;
 
-  const state = {
-    abi: null,
-    rpc: null,
-    read: null,
-    account: null,
-    chainId: null,
-    browser: null,
-  };
+  const state = { abi: null, rpc: null, read: null, account: null, chainId: null, browser: null };
 
   /* ---------- tiny DOM helpers ---------- */
 
@@ -48,6 +42,22 @@
     return el;
   }
   const $ = (sel, root = document) => root.querySelector(sel);
+  /** Sets text only when it changed, so per-frame updates stay cheap. */
+  function setText(el, text) {
+    if (el.__t !== text) { el.__t = text; el.textContent = text; }
+  }
+  /** Static, trusted SVG paths only (never chain data). */
+  function icon(path) {
+    const el = h("span", { class: "ico" });
+    el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+    return el;
+  }
+  const ICONS = {
+    out: '<path d="M7 17 17 7M8 7h9v9"/>',
+    in: '<path d="M17 7 7 17M16 17H7V8"/>',
+    wallet: '<path d="M4 7a2 2 0 0 1 2-2h11v4"/><path d="M4 7v10a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1V10a1 1 0 0 0-1-1H6a2 2 0 0 1-2-2Z"/><path d="M16 14h.01"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  };
 
   /* ---------- formatting ---------- */
 
@@ -64,9 +74,11 @@
     const dec = (s.split(".")[1] || "").length;
     return dec < 4 ? s + "0".repeat(4 - dec) : s;
   }
-  const fmtDate = (ts) => new Date(ts * 1000).toLocaleString();
+  const DATE_FMT = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const fmtDate = (ts) => DATE_FMT.format(new Date(ts * 1000));
   const shortAddr = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
   function fmtDuration(sec) {
+    sec = Math.max(0, Math.floor(sec));
     const units = [["d", 86400], ["h", 3600], ["min", 60], ["s", 1]];
     const parts = [];
     for (const [name, size] of units) {
@@ -88,6 +100,16 @@
     if (now >= s.endTime) return s.deposit;
     return (s.deposit * BigInt(now - s.startTime)) / BigInt(s.endTime - s.startTime);
   }
+  /** Same formula at millisecond resolution, for smooth live counters (display only). */
+  function streamedAtMs(s, ms) {
+    if (s.canceled) return s.deposit - s.refunded;
+    const st = BigInt(s.startTime) * 1000n;
+    const en = BigInt(s.endTime) * 1000n;
+    const n = BigInt(Math.floor(ms));
+    if (n <= st) return 0n;
+    if (n >= en) return s.deposit;
+    return (s.deposit * (n - st)) / (en - st);
+  }
   const withdrawableAt = (s, now) => streamedAt(s, now) - s.withdrawn;
   function refundableAt(s, now) {
     return s.cancelable && !s.canceled && now < s.endTime ? s.deposit - streamedAt(s, now) : 0n;
@@ -99,6 +121,10 @@
     if (now >= s.endTime) return "Settled";
     return "Streaming";
   }
+  const statusLabel = (s, now) => {
+    const st = statusAt(s, now);
+    return s.canceled && st === "Depleted" ? "Canceled" : st;
+  };
   function normStream(id, r) {
     return {
       id: BigInt(id),
@@ -113,23 +139,98 @@
       refunded: r.refunded,
     };
   }
+  async function fetchStream(id) {
+    return normStream(id, await state.read.getStream(id));
+  }
 
-  /* ---------- toasts and error messages ---------- */
+  /* ---------- live ticker and counters ---------- */
 
-  const toastBox = () => $("#toasts");
+  function startTicker(fn) {
+    let on = true;
+    const loop = () => {
+      if (!on) return;
+      fn(Date.now());
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    return () => { on = false; };
+  }
+
+  function counter(big) {
+    const main = h("span");
+    const dim = h("span", { class: "num-dim" });
+    const el = h("div", { class: `num${big ? " big" : ""}` }, main, dim, h("span", { class: "num-unit" }, "zkLTC"));
+    return {
+      el,
+      set(wei) {
+        const [i, f = ""] = ethers.formatEther(wei).split(".");
+        const d = (f + "00000000").slice(0, 8);
+        setText(main, `${i}.${d.slice(0, 4)}`);
+        setText(dim, d.slice(4));
+      },
+    };
+  }
+
+  function statusBadge() {
+    const el = h("span", { class: "badge" });
+    return {
+      el,
+      set(label) {
+        setText(el, label);
+        const cls = `badge ${label.toLowerCase()}`;
+        if (el.className !== cls) el.className = cls;
+      },
+    };
+  }
+
+  function progressBar() {
+    const streamed = h("i", { class: "fill-s" });
+    const withdrawn = h("i", { class: "fill-w" });
+    const el = h("div", { class: "bar" }, streamed, withdrawn);
+    return {
+      el,
+      set(s, streamedWei, live) {
+        const pct = (v) => (s.deposit === 0n ? 0 : Number((v * 10000n) / s.deposit) / 100);
+        const a = `${pct(streamedWei)}%`;
+        const b = `${pct(s.withdrawn)}%`;
+        if (streamed.__w !== a) { streamed.__w = a; streamed.style.width = a; }
+        if (withdrawn.__w !== b) { withdrawn.__w = b; withdrawn.style.width = b; }
+        el.classList.toggle("live", live);
+      },
+    };
+  }
+
+  /* ---------- toasts, dialog, error messages ---------- */
+
   function toast(kind, message, href) {
     const el = h("div", { class: `toast ${kind}` });
     setToast(el, kind, message, href);
-    toastBox().append(el);
+    $("#toasts").append(el);
     return el;
   }
   function setToast(el, kind, message, href) {
     el.className = `toast ${kind}`;
-    const kids = [h("button", { type: "button", "aria-label": "Dismiss", onclick: () => el.remove() }, "×"), message];
+    const kids = [h("button", { type: "button", class: "x", "aria-label": "Dismiss", onclick: () => el.remove() }, "×"), message];
     if (href) kids.push(" ", h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "View on explorer"));
     el.replaceChildren(...kids);
     clearTimeout(el._t);
     if (kind !== "pending") el._t = setTimeout(() => el.remove(), kind === "error" ? 25000 : 12000);
+  }
+
+  function confirmDialog({ title, body, confirm = "Confirm", danger = false }) {
+    return new Promise((resolve) => {
+      const d = $("#dialog");
+      d.returnValue = "";
+      d.replaceChildren(
+        h("h2", null, title),
+        h("p", null, body),
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn", onclick: () => d.close("no") }, "Not now"),
+          h("button", { type: "button", class: `btn ${danger ? "btn-danger-solid" : "btn-primary"}`, onclick: () => d.close("ok") }, confirm)),
+      );
+      d.addEventListener("close", () => resolve(d.returnValue === "ok"), { once: true });
+      d.showModal();
+    });
   }
 
   const ERROR_TEXT = {
@@ -187,7 +288,7 @@
       const accts = await eth.request({ method: "eth_accounts" });
       state.account = accts && accts[0] ? ethers.getAddress(accts[0]) : null;
       state.browser = new ethers.BrowserProvider(eth, "any");
-    } catch (e) {
+    } catch {
       state.account = null;
     }
     updateWalletUi();
@@ -196,7 +297,7 @@
   async function connect() {
     const eth = injected();
     if (!eth) {
-      toast("error", "No wallet found. Install MetaMask or Rabby in this browser, then reload the page.");
+      toast("error", "No wallet found. Open this page in your wallet's browser (MetaMask, Rabby) or install a wallet extension, then reload.");
       return;
     }
     try {
@@ -211,7 +312,7 @@
   async function switchNetwork() {
     const eth = injected();
     if (!eth) {
-      toast("error", "No wallet found. Install MetaMask or Rabby in this browser, then reload the page.");
+      toast("error", "No wallet found. Open this page in your wallet's browser (MetaMask, Rabby) or install a wallet extension, then reload.");
       return false;
     }
     try {
@@ -232,15 +333,19 @@
   function updateWalletUi() {
     const btn = $("#connect-btn");
     if (state.account) {
-      btn.textContent = shortAddr(state.account);
-      btn.title = state.account;
-      btn.disabled = true;
-      btn.classList.remove("btn-primary");
+      const hue = (i) => (parseInt(state.account.slice(i, i + 2), 16) / 255) * 360;
+      const right = state.chainId === cfg.chainId;
+      btn.className = "btn wallet-btn";
+      btn.title = `${state.account}\nClick to copy`;
+      btn.replaceChildren(
+        h("span", { class: "avatar", style: `background:linear-gradient(135deg,hsl(${hue(2)} 70% 62%),hsl(${hue(4)} 70% 42%))` }),
+        h("span", { class: "addr mono" }, shortAddr(state.account)),
+        h("span", { class: `dot ${right ? "ok" : "warn"}`, title: right ? "Connected to LitVM LiteForge" : "Wrong network" }),
+      );
     } else {
-      btn.textContent = "Connect wallet";
+      btn.className = "btn btn-primary";
       btn.title = "";
-      btn.disabled = false;
-      btn.classList.add("btn-primary");
+      btn.replaceChildren("Connect wallet");
     }
     const banner = $("#net-banner");
     const wrong = injected() && state.chainId != null && state.chainId !== cfg.chainId;
@@ -251,6 +356,14 @@
         h("button", { type: "button", class: "btn btn-sm", onclick: switchNetwork }, "Add / switch to LitVM LiteForge"),
       );
     }
+  }
+
+  async function onWalletClick() {
+    if (!state.account) { connect(); return; }
+    try {
+      await navigator.clipboard.writeText(state.account);
+      toast("success", "Address copied.");
+    } catch { /* clipboard not available */ }
   }
 
   /** Returns a contract bound to the wallet signer, or null if the user must still connect / switch. */
@@ -284,10 +397,87 @@
     }
   }
 
+  /* ---------- shared stream actions (Withdraw / Pay out / Cancel / Renounce) ---------- */
+
+  /** ctx.get() returns the latest stream; ctx.after() re-reads data after a transaction. */
+  function buildActions(ctx) {
+    let busy = false;
+    const mk = (cls, label, kind) => h("button", { type: "button", class: `btn btn-sm ${cls}`, onclick: () => run(kind) }, label);
+    const withdraw = mk("btn-primary", "Withdraw", "withdraw");
+    const pay = mk("btn-primary", "Pay out now", "pay");
+    const cancel = mk("btn-danger", "Cancel stream", "cancel");
+    const renounce = mk("", "Renounce cancel", "renounce");
+    const el = h("div", { class: "actions" }, withdraw, pay, cancel, renounce);
+    const all = [withdraw, pay, cancel, renounce];
+
+    async function run(kind) {
+      if (busy) return;
+      const s = ctx.get();
+      const id = s.id.toString();
+      const now = nowSec();
+      let send;
+      let label;
+      if (kind === "cancel") {
+        const ok = await confirmDialog({
+          title: `Cancel stream #${id}?`,
+          body: `You get back about ${fmt(refundableAt(s, now), 6)} zkLTC right now. What has already streamed stays withdrawable by the recipient. This cannot be undone.`,
+          confirm: "Cancel stream",
+          danger: true,
+        });
+        if (!ok) return;
+        label = `Cancel stream #${id}`;
+        send = (c) => c.cancel(id);
+      } else if (kind === "renounce") {
+        const ok = await confirmDialog({
+          title: `Give up the right to cancel stream #${id}?`,
+          body: "After this the whole deposit goes to the recipient over time and you can never take it back. This cannot be undone.",
+          confirm: "Renounce",
+          danger: true,
+        });
+        if (!ok) return;
+        label = `Renounce stream #${id}`;
+        send = (c) => c.renounce(id);
+      } else {
+        label = kind === "withdraw" ? `Withdraw from stream #${id}` : `Pay out stream #${id}`;
+        send = (c) => c.withdrawMax(id);
+      }
+      busy = true;
+      for (const b of all) b.disabled = true;
+      try {
+        if (await sendTx(label, send)) await ctx.after();
+      } finally {
+        busy = false;
+        for (const b of all) b.disabled = false;
+      }
+    }
+
+    return {
+      el,
+      update(s, now) {
+        const me = state.account;
+        const isSender = !!me && me === s.sender;
+        const isRecipient = !!me && me === s.recipient;
+        const can = withdrawableAt(s, now) > 0n;
+        const refundable = refundableAt(s, now) > 0n;
+        withdraw.hidden = !(me && isRecipient && can);
+        pay.hidden = !(me && !isRecipient && can);
+        setText(pay, isSender ? "Pay out now" : "Pay out to recipient");
+        cancel.hidden = !(isSender && refundable);
+        renounce.hidden = !(isSender && refundable);
+      },
+    };
+  }
+
   /* ---------- router ---------- */
 
   let cleanup = null;
-  const routes = { create: viewCreate, outgoing: viewOutgoing, incoming: viewLater, stream: viewLater, "how-it-works": viewLater };
+  const routes = {
+    create: viewCreate,
+    outgoing: (root) => viewList(root, "out"),
+    incoming: (root) => viewList(root, "in"),
+    stream: viewStream,
+    "how-it-works": viewHow,
+  };
 
   function parseHash() {
     const parts = location.hash.replace(/^#\/?/, "").split("/");
@@ -299,22 +489,23 @@
     for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.route === name);
     const root = $("#view");
     root.replaceChildren();
+    window.scrollTo(0, 0);
     cleanup = routes[name](root, arg) || null;
   }
 
-  function viewLater(root) {
-    root.append(h("div", { class: "card empty" }, "This view is coming in the next build step."));
-  }
+  const pageHead = (title, lead) => h("div", { class: "page-head" }, h("h1", { class: "grad-text" }, title), lead ? h("p", { class: "lead" }, lead) : null);
 
-  const connectPrompt = (text) =>
+  const connectPrompt = (title, text) =>
     h("div", { class: "card empty" },
+      icon(ICONS.wallet),
+      h("h2", null, title),
       h("p", null, text),
       h("button", { type: "button", class: "btn btn-primary", onclick: connect }, "Connect wallet"));
 
   /* ---------- Create view ---------- */
 
   const PRESETS = [
-    { key: "demo", label: "10 min (demo)", sec: 600 },
+    { key: "demo", label: "10 min · demo", sec: 600 },
     { key: "1h", label: "1 hour", sec: 3600 },
     { key: "1d", label: "1 day", sec: 86400 },
     { key: "7d", label: "7 days", sec: 7 * 86400 },
@@ -323,7 +514,6 @@
     { key: "custom", label: "Custom", sec: null },
   ];
   const UNITS = { minutes: 60, hours: 3600, days: 86400 };
-
   const toLocalInput = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
   function viewCreate(root) {
@@ -334,39 +524,44 @@
 
     const recipient = h("input", { type: "text", id: "recipient", placeholder: "0x…", autocomplete: "off", spellcheck: "false" });
     const amount = h("input", { type: "text", id: "amount", inputmode: "decimal", placeholder: "0.005", autocomplete: "off" });
+    const maxBtn = h("button", { type: "button", class: "chip-btn", hidden: true, onclick: () => {
+      if (balance != null && balance > GAS_RESERVE) { amount.value = ethers.formatEther(balance - GAS_RESERVE); update(); }
+    } }, "Max");
     const balanceHint = h("p", { class: "hint" });
     const customNum = h("input", { type: "number", min: "1", step: "any", value: "1", "aria-label": "Custom duration" });
     const customUnit = h("select", { "aria-label": "Custom duration unit" },
       Object.keys(UNITS).map((u) => h("option", { value: u, selected: u === "hours" }, u)));
-    const customRow = h("div", { class: "row", hidden: true }, customNum, customUnit);
-    const scheduled = h("input", { type: "datetime-local", id: "start-at", hidden: true });
-    const cancelable = h("input", { type: "checkbox", id: "cancelable", checked: true });
-    const summary = h("div", { class: "summary", hidden: true });
+    const customRow = h("div", { class: "row", style: "margin-top:.6rem", hidden: true }, customNum, customUnit);
+    const scheduled = h("input", { type: "datetime-local", id: "start-at", style: "margin-top:.6rem", hidden: true });
+    const cancelable = h("input", { type: "checkbox", id: "cancelable", class: "switch", checked: true });
+    const previewBody = h("div");
     const problems = h("ul", { class: "errors", hidden: true });
     const submit = h("button", { type: "button", class: "btn btn-primary btn-block", disabled: true }, "Create stream");
     const result = h("div");
 
     const presetBtns = PRESETS.map((p) =>
-      h("button", { type: "button", class: "chip", "data-key": p.key, "aria-pressed": String(p.key === preset),
-        onclick: () => { preset = p.key; customRow.hidden = preset !== "custom"; for (const b of presetBtns) b.setAttribute("aria-pressed", String(b.dataset.key === preset)); update(); } },
-      p.label));
+      h("button", { type: "button", class: "seg-btn", "data-key": p.key, "aria-pressed": String(p.key === preset),
+        onclick: () => {
+          preset = p.key;
+          customRow.hidden = preset !== "custom";
+          for (const b of presetBtns) b.setAttribute("aria-pressed", String(b.dataset.key === preset));
+          update();
+        } }, p.label));
     const startBtns = ["now", "scheduled"].map((m) =>
-      h("button", { type: "button", class: "chip", "data-mode": m, "aria-pressed": String(m === startMode),
+      h("button", { type: "button", class: "seg-btn", "data-mode": m, "aria-pressed": String(m === startMode),
         onclick: () => {
           startMode = m;
           scheduled.hidden = m !== "scheduled";
           if (m === "scheduled" && !scheduled.value) scheduled.value = toLocalInput(Date.now() + 15 * 60000);
           for (const b of startBtns) b.setAttribute("aria-pressed", String(b.dataset.mode === startMode));
           update();
-        } },
-      m === "now" ? "Start now" : "Scheduled"));
+        } }, m === "now" ? "Start now" : "Schedule"));
 
     function readForm() {
       const errs = [];
       let ready = true;
       const p = { recipient: null, deposit: null, duration: null, start: 0, cancelable: cancelable.checked };
 
-      // Recipient
       const rv = recipient.value.trim();
       let rOk = false;
       if (!rv) ready = false;
@@ -381,7 +576,6 @@
       recipient.classList.toggle("invalid", !!rv && !rOk);
       if (!rOk) ready = false;
 
-      // Amount
       const av = amount.value.trim().replace(",", ".");
       let aOk = false;
       if (!av) ready = false;
@@ -395,19 +589,17 @@
       amount.classList.toggle("invalid", !!av && !aOk);
       if (!aOk) ready = false;
 
-      // Duration
       let dur;
       if (preset === "custom") {
         const n = Number(customNum.value);
         dur = Number.isFinite(n) && n > 0 ? Math.round(n * UNITS[customUnit.value]) : NaN;
       } else dur = PRESETS.find((x) => x.key === preset).sec;
-      if (!Number.isFinite(dur)) { ready = false; }
+      if (!Number.isFinite(dur)) ready = false;
       else if (dur < MIN_DURATION || dur > MAX_DURATION) {
         errs.push("The duration must be between 1 minute and 3650 days.");
         ready = false;
       } else p.duration = dur;
 
-      // Start
       if (startMode === "scheduled") {
         const ms = scheduled.value ? new Date(scheduled.value).getTime() : NaN;
         if (Number.isNaN(ms)) ready = false;
@@ -421,6 +613,8 @@
       return { p, errs, ready };
     }
 
+    const stat = (label, value) => h("div", { class: "stat" }, h("span", null, label), h("b", null, value));
+
     function update() {
       const { p, errs, ready } = readForm();
       problems.replaceChildren(...errs.map((m) => h("li", null, m)));
@@ -431,32 +625,40 @@
         const startTs = p.start || nowSec();
         const endTs = startTs + p.duration;
         const d = BigInt(p.duration);
-        const day = (p.deposit * 86400n) / d;
-        const sec = p.deposit / d;
-        summary.hidden = false;
-        summary.classList.toggle("cant", !p.cancelable);
-        summary.replaceChildren(
-          "From ", h("strong", null, p.start ? fmtDate(startTs) : `now (${fmtDate(startTs)})`),
-          " to ", h("strong", null, fmtDate(endTs)), ", ",
-          h("strong", { class: "mono", title: p.recipient }, shortAddr(p.recipient)),
-          " will receive ", h("strong", null, `${fmt(p.deposit, 4)} zkLTC`),
-          ` (${fmtDuration(p.duration)}), about `, h("strong", null, `${fmtRate(day)} per day`),
-          ` (${fmtRate(sec)} per second). You `,
-          h("strong", null, p.cancelable ? "CAN" : "CANNOT"),
-          p.cancelable
-            ? " cancel and take back the part that has not streamed yet."
-            : " cancel: once created, the whole amount goes to the recipient over time and you cannot take it back.",
+        previewBody.replaceChildren(
+          h("p", { class: "summary-text" },
+            "From ", h("strong", null, p.start ? fmtDate(startTs) : `now (${fmtDate(startTs)})`),
+            " to ", h("strong", null, fmtDate(endTs)), ", ",
+            h("strong", { class: "mono", title: p.recipient }, shortAddr(p.recipient)),
+            " will receive ", h("strong", null, `${fmt(p.deposit, 4)} zkLTC`),
+            ` over ${fmtDuration(p.duration)}: about `, h("strong", null, `${fmtRate((p.deposit * 86400n) / d)} per day`),
+            ` (${fmtRate(p.deposit / d)} per second). You `,
+            h("strong", null, p.cancelable ? "CAN" : "CANNOT"),
+            p.cancelable ? " cancel and take back the part that has not streamed yet." : " cancel and take back the unstreamed part.",
+          ),
+          h("div", { class: "stat-grid" },
+            stat("Per second", fmtRate(p.deposit / d)),
+            stat("Per hour", fmtRate((p.deposit * 3600n) / d)),
+            stat("Per day", fmtRate((p.deposit * 86400n) / d)),
+            stat("Per 30 days", fmtRate((p.deposit * 2592000n) / d)),
+            stat("Starts", p.start ? fmtDate(startTs) : "On confirmation"),
+            stat("Ends", p.start ? fmtDate(endTs) : `~${fmtDate(endTs)}`)),
+          h("div", { class: `mode-note${p.cancelable ? "" : " cant"}` },
+            p.cancelable
+              ? "Cancelable: you can stop this stream at any time and get the unstreamed part back."
+              : "Not cancelable: the full amount is committed to the recipient and cannot be taken back."),
         );
-      } else summary.hidden = true;
+      } else previewBody.replaceChildren(h("p", { class: "placeholder" }, "Fill in the recipient and amount to see a plain-English summary of your stream before you sign."));
     }
 
     async function refreshBalance() {
-      if (!state.account) { balance = null; balanceHint.textContent = "Connect your wallet to see your balance."; return; }
+      if (!state.account) { balance = null; balanceHint.textContent = "Connect your wallet to see your balance."; maxBtn.hidden = true; return; }
       try {
         const b = await state.rpc.getBalance(state.account);
         if (!alive) return;
         balance = b;
-        balanceHint.replaceChildren(`Your balance: ${fmt(b)} zkLTC. Keep a little for network fees.`);
+        balanceHint.textContent = `Balance: ${fmt(b)} zkLTC. Keep a little for network fees.`;
+        maxBtn.hidden = b <= GAS_RESERVE;
       } catch { balanceHint.textContent = ""; }
       update();
     }
@@ -476,12 +678,13 @@
             if (ev && ev.name === "StreamCreated") id = ev.args.id;
           } catch { /* other event */ }
         }
-        result.replaceChildren(h("div", { class: "card" },
-          h("h2", null, id != null ? `Stream #${id} created` : "Stream created"),
-          h("p", null, "The recipient can now withdraw what has streamed at any time."),
+        result.replaceChildren(h("div", { class: "card", style: "margin-top:1rem" },
+          h("h2", { class: "ok" }, id != null ? `Stream #${id} created` : "Stream created"),
+          h("p", { class: "muted" }, "The recipient can now withdraw what has streamed at any time. Share the stream page so they can watch it tick."),
           h("div", { class: "actions" },
-            h("a", { class: "btn btn-primary", href: "#/outgoing" }, "See my outgoing streams"),
-            h("a", { class: "btn", href: txUrl(rc.hash), target: "_blank", rel: "noopener noreferrer" }, "Transaction on explorer"))));
+            id != null ? h("a", { class: "btn btn-primary btn-sm", href: `#/stream/${id}` }, "Open stream page") : null,
+            h("a", { class: "btn btn-sm", href: "#/outgoing" }, "My outgoing streams"),
+            h("a", { class: "btn btn-sm", href: txUrl(rc.hash), target: "_blank", rel: "noopener noreferrer" }, "Transaction"))));
         refreshBalance();
       }
       update();
@@ -493,57 +696,147 @@
     }
 
     root.append(
-      h("h1", null, "Create a stream"),
-      h("p", { class: "muted" }, "Lock zkLTC for one recipient. It unlocks linearly, every second, until the end time."),
-      h("div", { class: "card" },
-        h("label", { for: "recipient" }, "Recipient address"), recipient,
-        h("label", { for: "amount" }, "Amount (zkLTC)"), amount, balanceHint,
-        h("label", null, "Duration"), h("div", { class: "chips" }, presetBtns), customRow,
-        h("label", null, "Start"), h("div", { class: "chips" }, startBtns), scheduled,
-        h("label", { class: "toggle", for: "cancelable" }, cancelable,
-          h("span", null, h("b", null, "Cancelable. "),
-            "If on, you can stop the stream at any time and get the unstreamed part back; what already streamed stays with the recipient. If off, the deposit is committed and cannot be taken back. You can also give up the right to cancel later (“renounce”).")),
-        summary, problems, submit),
-      result,
+      pageHead("Stream money by the second", "Lock zkLTC for one recipient. It unlocks linearly, every second, until the end time. Get paid in hard money, every second."),
+      h("div", { class: "grid-2" },
+        h("div", { class: "card" },
+          h("div", { class: "field" }, h("label", { for: "recipient" }, "Recipient address"), recipient),
+          h("div", { class: "field" },
+            h("label", { for: "amount" }, "Amount"),
+            h("div", { class: "input-wrap" }, amount, h("div", { class: "suffix" }, maxBtn, "zkLTC")),
+            balanceHint),
+          h("div", { class: "field" }, h("span", { class: "label" }, "Duration"), h("div", { class: "seg" }, presetBtns), customRow),
+          h("div", { class: "field" }, h("span", { class: "label" }, "Start"), h("div", { class: "seg" }, startBtns), scheduled),
+          h("label", { class: "toggle-card", for: "cancelable" },
+            cancelable,
+            h("div", null, h("b", null, "Cancelable"),
+              h("span", { class: "t" }, "On: you can stop the stream any time and take back the unstreamed part. Off: the deposit is committed. You can also give up the right to cancel later (“renounce”).")))),
+        h("div", { class: "sticky" },
+          h("div", { class: "card" }, h("h3", { style: "margin-bottom:.75rem" }, "Review"), previewBody, problems, submit),
+          result)),
     );
     update();
     refreshBalance();
     return () => { alive = false; };
   }
 
-  /* ---------- Outgoing view ---------- */
+  /* ---------- Outgoing / Incoming lists ---------- */
 
-  function viewOutgoing(root) {
-    if (!state.account) { root.append(h("h1", null, "Outgoing streams"), connectPrompt("Connect your wallet to see the streams you created.")); return; }
+  function buildCard(id, mode, ctx) {
+    const out = mode === "out";
+    let s = null;
+    const badge = statusBadge();
+    const hero = counter(false);
+    const bar = progressBar();
+    const party = h("span", { class: "sc-party" });
+    const v = {};
+    const kv = (key, label) => { v[key] = h("b"); return h("div", null, h("span", null, label), v[key]); };
+    const actions = buildActions({ get: () => s, after: ctx.after });
+    const el = h("div", { class: "card stream-card" },
+      h("div", { class: "sc-top" }, h("a", { class: "sc-id", href: `#/stream/${id}` }, `#${id}`), badge.el, party),
+      h("div", { class: "hero" }, h("div", { class: "hero-label" }, out ? "Streamed so far" : "Available to withdraw"), hero.el),
+      bar.el,
+      h("div", { class: "kv" },
+        kv("deposit", "Deposit"), kv("withdrawn", out ? "Paid out" : "Withdrawn"),
+        kv("rest", out ? "You can take back" : "Still to stream"),
+        kv("start", "Start"), kv("end", "End"), kv("cancelable", "Cancelable")),
+      actions.el);
+
+    return {
+      el,
+      get net() { return s.deposit - s.refunded; },
+      get stream() { return s; },
+      setData(next) {
+        const first = s === null;
+        s = next;
+        if (first) {
+          party.append(out ? "To " : "From ", addrLink(out ? s.recipient : s.sender));
+          setText(v.start, fmtDate(s.startTime));
+          setText(v.end, fmtDate(s.endTime));
+        }
+        setText(v.deposit, `${fmt(s.deposit)} zkLTC`);
+        setText(v.withdrawn, `${fmt(s.withdrawn)} zkLTC`);
+      },
+      tick(ms) {
+        const now = Math.floor(ms / 1000);
+        const streamed = streamedAtMs(s, ms);
+        const avail = streamed > s.withdrawn ? streamed - s.withdrawn : 0n;
+        const label = statusLabel(s, now);
+        badge.set(label);
+        hero.set(out ? streamed : avail);
+        bar.set(s, streamed, label === "Streaming");
+        const refundable = refundableAt(s, now);
+        setText(v.rest, out ? `${fmt(refundable, 6)} zkLTC` : `${fmt(s.deposit - s.refunded - streamed, 6)} zkLTC`);
+        setText(v.cancelable, s.canceled ? "Canceled" : refundable > 0n ? "Yes" : s.cancelable ? "Not any more (ended)" : "No (final)");
+        actions.update(s, now);
+        return avail;
+      },
+    };
+  }
+
+  function viewList(root, mode) {
+    const out = mode === "out";
+    const title = out ? "Outgoing streams" : "Incoming streams";
+    const head = pageHead(title, out
+      ? "Streams you created. Paying out sends what has streamed to the recipient on their behalf."
+      : "Money streaming to you. Watch it grow and withdraw whenever you like.");
+    if (!state.account) {
+      root.append(head, connectPrompt(out ? "Connect to see your outgoing streams" : "Connect to see your incoming streams",
+        "Read-only streams can also be opened by link, no wallet needed."));
+      return;
+    }
 
     const account = state.account;
-    const streams = new Map(); // id (string) -> stream
-    const cards = new Map(); // id (string) -> { el, refs }
-    let order = []; // ids, newest first
-    let nextEnd = 0; // sentIds index below which older streams are still unloaded
+    const countFn = out ? "sentCount" : "receivedCount";
+    const idsFn = out ? "sentIds" : "receivedIds";
+    const cards = new Map(); // id -> card
+    const order = [];
+    let nextEnd = 0;
     let hideDust = true;
     let alive = true;
     let loading = false;
 
     const list = h("div");
-    const status = h("p", { class: "muted small" });
+    const status = h("span", { class: "muted small" });
     const moreBtn = h("button", { type: "button", class: "btn", hidden: true, onclick: () => loadMore() }, "Load older streams");
-    const dustBox = h("input", { type: "checkbox", id: "dust", checked: true });
-    dustBox.addEventListener("change", () => { hideDust = dustBox.checked; applyAll(); });
+    const dustBox = h("input", { type: "checkbox", class: "switch", id: "dust", checked: true });
+    dustBox.addEventListener("change", () => { hideDust = dustBox.checked; refreshVisibility(); });
+    const emptyEl = h("div", { class: "card empty", hidden: true });
+    const totals = counter(false);
+    const totalsBox = h("div", { class: "card totals", hidden: true }, h("div", { class: "hero-label" }, "Available to withdraw now"), totals.el);
+    const skeletons = [h("div", { class: "card skeleton" }), h("div", { class: "card skeleton" })];
 
     root.append(
-      h("h1", null, "Outgoing streams"),
-      h("p", { class: "muted" }, "Streams you created. Paying out sends the streamed amount to the recipient on their behalf."),
+      head,
+      ...(out ? [] : [totalsBox]),
       h("div", { class: "list-tools" },
-        h("label", { for: "dust" }, dustBox, "Hide dust (less than 0.0001 zkLTC)"), status),
-      list, moreBtn,
+        h("label", { class: "inline", for: "dust" }, dustBox, "Hide dust (under 0.0001 zkLTC)"), status),
+      emptyEl, ...skeletons, list, h("div", { style: "text-align:center;margin-top:1rem" }, moreBtn),
     );
 
-    async function fetchStream(id) {
-      const raw = await state.read.getStream(id);
-      const s = normStream(id, raw);
-      streams.set(String(id), s);
-      return s;
+    const ctx = { after: () => refreshAll() };
+
+    function refreshVisibility() {
+      let shown = 0;
+      let hidden = 0;
+      for (const id of order) {
+        const c = cards.get(id);
+        const hide = hideDust && c.net < DUST;
+        c.el.hidden = hide;
+        if (hide) hidden++; else shown++;
+      }
+      setText(status, order.length ? `${shown} shown${hidden ? ` · ${hidden} hidden as dust` : ""}` : "");
+      const noneYet = order.length === 0 && nextEnd === 0 && !loading;
+      const allHidden = order.length > 0 && shown === 0 && nextEnd === 0;
+      emptyEl.hidden = !(noneYet || allHidden);
+      if (noneYet) {
+        emptyEl.replaceChildren(icon(out ? ICONS.out : ICONS.in),
+          h("h2", null, out ? "No outgoing streams yet" : "No incoming streams yet"),
+          h("p", null, out ? "Create your first stream in a few seconds." : "When someone streams zkLTC to your address, it shows up here."),
+          out ? h("a", { class: "btn btn-primary", href: "#/create" }, "Create a stream") : null);
+      } else if (allHidden) {
+        emptyEl.replaceChildren(icon(ICONS.search), h("h2", null, "Everything here is dust"),
+          h("p", null, "All streams are below 0.0001 zkLTC. Turn off “Hide dust” to see them."));
+      }
     }
 
     async function loadMore() {
@@ -552,132 +845,211 @@
       moreBtn.disabled = true;
       try {
         const start = Math.max(0, nextEnd - PAGE);
-        const ids = await state.read.sentIds(account, start, nextEnd - start);
+        const ids = await state.read[idsFn](account, start, nextEnd - start);
         const fresh = [...ids].reverse();
-        await Promise.all(fresh.map(fetchStream));
+        const data = await Promise.all(fresh.map(fetchStream));
         if (!alive) return;
-        for (const id of fresh) {
-          order.push(String(id));
-          const card = buildCard(String(id));
-          cards.set(String(id), card);
+        fresh.forEach((rawId, i) => {
+          const id = String(rawId);
+          const card = buildCard(id, mode, ctx);
+          card.setData(data[i]);
+          card.tick(Date.now());
+          cards.set(id, card);
+          order.push(id);
           list.append(card.el);
-        }
+        });
         nextEnd = start;
-        applyAll();
       } catch (e) {
-        status.textContent = humanError(e);
+        setText(status, humanError(e));
       } finally {
         loading = false;
         moreBtn.disabled = false;
         moreBtn.hidden = nextEnd === 0;
+        for (const sk of skeletons) sk.remove();
+        if (alive) refreshVisibility();
       }
     }
 
     async function refreshAll() {
       try {
-        await Promise.all(order.map(fetchStream));
-        if (alive) applyAll();
+        const data = await Promise.all(order.map(fetchStream));
+        if (!alive) return;
+        order.forEach((id, i) => cards.get(id).setData(data[i]));
+        refreshVisibility();
       } catch { /* keep showing the last known data */ }
-    }
-
-    function buildCard(id) {
-      const refs = {};
-      const idLink = h("a", { href: `#/stream/${id}` }, `Stream #${id}`);
-      refs.badge = h("span", { class: "badge" });
-      refs.bar = h("div");
-      const kv = (key, label) => { refs[key] = h("b"); return h("div", null, h("span", null, label), refs[key]); };
-      refs.recipient = h("div", null, h("span", null, "Recipient"), h("b"));
-      refs.cancel = h("button", { type: "button", class: "btn btn-danger btn-sm", onclick: () => doCancel(id) }, "Cancel stream");
-      refs.renounce = h("button", { type: "button", class: "btn btn-sm", onclick: () => doRenounce(id) }, "Renounce cancel");
-      refs.pay = h("button", { type: "button", class: "btn btn-primary btn-sm", onclick: () => doPay(id) }, "Pay out now");
-      const el = h("div", { class: "card" },
-        h("div", { class: "stream-head" }, idLink, refs.badge),
-        h("div", { class: "progress" }, refs.bar),
-        h("div", { class: "kv" },
-          refs.recipient,
-          kv("deposit", "Deposit"), kv("streamed", "Streamed"), kv("withdrawn", "Withdrawn by recipient"),
-          kv("payable", "Ready to pay out"), kv("refundable", "You can still take back"),
-          kv("start", "Start"), kv("end", "End"), kv("cancelable", "Cancelable")),
-        h("div", { class: "actions" }, refs.pay, refs.cancel, refs.renounce));
-      return { el, refs };
-    }
-
-    function updateCard(id, now) {
-      const s = streams.get(id);
-      const { el, refs } = cards.get(id);
-      const net = s.deposit - s.refunded;
-      el.hidden = hideDust && net < DUST;
-      const st = statusAt(s, now);
-      const label = s.canceled && st === "Depleted" ? "Canceled" : st;
-      refs.badge.textContent = label;
-      refs.badge.className = `badge ${label.toLowerCase()}`;
-      const streamed = streamedAt(s, now);
-      const pct = s.deposit === 0n ? 0 : Number((streamed * 10000n) / s.deposit) / 100;
-      refs.bar.style.width = `${pct}%`;
-      const withdrawable = withdrawableAt(s, now);
-      const refundable = refundableAt(s, now);
-      const r = refs.recipient.lastChild;
-      if (!r.firstChild) r.append(addrLink(s.recipient));
-      refs.deposit.textContent = `${fmt(s.deposit)} zkLTC`;
-      refs.streamed.textContent = `${fmt(streamed, 6)} zkLTC`;
-      refs.withdrawn.textContent = `${fmt(s.withdrawn)} zkLTC`;
-      refs.payable.textContent = `${fmt(withdrawable, 6)} zkLTC`;
-      refs.refundable.textContent = `${fmt(refundable, 6)} zkLTC`;
-      refs.start.textContent = fmtDate(s.startTime);
-      refs.end.textContent = fmtDate(s.endTime);
-      refs.cancelable.textContent = s.canceled ? "Canceled" : refundable > 0n ? "Yes" : s.cancelable ? "Not any more (ended)" : "No (final)";
-      refs.pay.hidden = withdrawable <= 0n;
-      refs.cancel.hidden = refundable <= 0n;
-      refs.renounce.hidden = refundable <= 0n;
-    }
-
-    function applyAll() {
-      const now = nowSec();
-      let hidden = 0;
-      for (const id of order) {
-        updateCard(id, now);
-        if (cards.get(id).el.hidden) hidden++;
-      }
-      const total = order.length;
-      status.textContent = total === 0 ? "" : `${total - hidden} shown${hidden ? `, ${hidden} hidden as dust` : ""}`;
-      if (total === 0 && nextEnd === 0 && !loading) {
-        list.replaceChildren(h("div", { class: "card empty" }, h("p", null, "You have not created any streams yet."), h("a", { class: "btn btn-primary", href: "#/create" }, "Create one")));
-      }
-    }
-
-    async function afterTx() { await refreshAll(); }
-
-    async function doCancel(id) {
-      const s = streams.get(id);
-      const refundable = refundableAt(s, nowSec());
-      const msg = `Cancel stream #${id}?\n\nYou get back about ${fmt(refundable, 6)} zkLTC now. What has already streamed stays withdrawable by the recipient. This cannot be undone.`;
-      if (!window.confirm(msg)) return;
-      if (await sendTx(`Cancel stream #${id}`, (c) => c.cancel(id))) await afterTx();
-    }
-    async function doRenounce(id) {
-      const msg = `Give up the right to cancel stream #${id}?\n\nAfter this the whole deposit will go to the recipient over time and you can never take it back. This cannot be undone.`;
-      if (!window.confirm(msg)) return;
-      if (await sendTx(`Renounce stream #${id}`, (c) => c.renounce(id))) await afterTx();
-    }
-    async function doPay(id) {
-      const s = streams.get(id);
-      const msg = `Pay out about ${fmt(withdrawableAt(s, nowSec()), 6)} zkLTC to ${s.recipient}?\n\nThe money always goes to the recipient, not to you.`;
-      if (!window.confirm(msg)) return;
-      if (await sendTx(`Pay out stream #${id}`, (c) => c.withdrawMax(id))) await afterTx();
     }
 
     (async () => {
       try {
-        nextEnd = Number(await state.read.sentCount(account));
-      } catch (e) { status.textContent = humanError(e); return; }
+        nextEnd = Number(await state.read[countFn](account));
+      } catch (e) {
+        for (const sk of skeletons) sk.remove();
+        setText(status, humanError(e));
+        return;
+      }
       if (!alive) return;
-      if (nextEnd === 0) { applyAll(); return; }
+      if (nextEnd === 0) { for (const sk of skeletons) sk.remove(); refreshVisibility(); return; }
       await loadMore();
     })();
 
-    const tick = setInterval(() => { if (order.length) applyAll(); }, 1000);
+    const stopTicker = startTicker((ms) => {
+      let sum = 0n;
+      for (const id of order) {
+        const c = cards.get(id);
+        const avail = c.tick(ms);
+        if (!c.el.hidden) sum += avail;
+      }
+      if (!out) {
+        totalsBox.hidden = order.length === 0;
+        totals.set(sum);
+      }
+    });
     const sync = setInterval(refreshAll, 15000);
-    return () => { alive = false; clearInterval(tick); clearInterval(sync); };
+    return () => { alive = false; stopTicker(); clearInterval(sync); };
+  }
+
+  /* ---------- Stream page (public, read-only without a wallet) ---------- */
+
+  function viewStream(root, arg) {
+    if (!/^\d{1,18}$/.test(arg || "")) {
+      root.append(h("div", { class: "card empty" }, icon(ICONS.search), h("h2", null, "Invalid stream link"),
+        h("p", null, "Stream ids are plain numbers, for example #/stream/1."), h("a", { class: "btn btn-primary", href: "#/create" }, "Create a stream")));
+      return;
+    }
+    const id = BigInt(arg);
+    let alive = true;
+    let s = null;
+    let stopTicker = null;
+    let sync = null;
+    const holder = h("div");
+    root.append(h("div", { class: "card skeleton" }), holder);
+
+    async function load() {
+      try {
+        s = await fetchStream(id);
+      } catch (e) {
+        if (!alive) return;
+        root.replaceChildren(h("div", { class: "card empty" }, icon(ICONS.search),
+          h("h2", null, `Stream #${id} not found`),
+          h("p", null, humanError(e).startsWith("Transaction failed") ? "Could not load this stream. Try again in a moment." : humanError(e)),
+          h("a", { class: "btn btn-primary", href: "#/create" }, "Create a stream")));
+        return;
+      }
+      if (!alive) return;
+      build();
+    }
+
+    function build() {
+      root.replaceChildren();
+      const badge = statusBadge();
+      const streamedC = counter(true);
+      const availC = counter(true);
+      const bar = progressBar();
+      const timeline = h("span");
+      const v = {};
+      const row = (key, label, content) => { v[key] = content || h("dd"); return [h("dt", null, label), v[key]]; };
+      const actions = buildActions({ get: () => s, after: refresh });
+      const youTag = (a) => (state.account && state.account === a ? h("span", { class: "muted" }, " (you)") : null);
+      const created = h("dd", null, "…");
+      const dur = BigInt(s.endTime - s.startTime);
+
+      root.append(
+        h("div", { class: "crumb" },
+          h("h1", { class: "grad-text" }, `Stream #${id}`), badge.el, h("span", { class: "spacer" }),
+          h("button", { type: "button", class: "btn btn-sm", onclick: async () => {
+            try { await navigator.clipboard.writeText(location.href); toast("success", "Link copied. Anyone can open it, no wallet needed."); } catch { toast("error", "Could not copy the link."); }
+          } }, "Copy link")),
+        h("div", { class: "card" },
+          h("div", { class: "hero-grid" },
+            h("div", null, h("div", { class: "hero-label" }, "Streamed so far"), streamedC.el),
+            h("div", null, h("div", { class: "hero-label" }, "Available to withdraw"), availC.el)),
+          bar.el,
+          h("div", { class: "timeline" }, h("span", null, `Start ${fmtDate(s.startTime)}`), timeline, h("span", null, `End ${fmtDate(s.endTime)}`)),
+          actions.el),
+        ...(state.account ? [] : [h("p", { class: "hint", style: "margin-top:.75rem" }, "Read-only view. Connect a wallet to withdraw, pay out or cancel.")]),
+        h("div", { class: "card", style: "margin-top:1rem" },
+          h("h3", { style: "margin-bottom:.9rem" }, "Details"),
+          h("dl", { class: "dl" },
+            h("dt", null, "Sender"), h("dd", null, addrLink(s.sender), youTag(s.sender)),
+            h("dt", null, "Recipient"), h("dd", null, addrLink(s.recipient), youTag(s.recipient)),
+            row("deposit", "Deposit"), row("withdrawn", "Withdrawn"),
+            s.canceled ? row("refunded", "Refunded to sender") : null,
+            h("dt", null, "Rate"), h("dd", null, dur > 0n ? `${fmtRate((s.deposit * 86400n) / dur)} per day · ${fmtRate(s.deposit / dur)} per second` : "n/a"),
+            h("dt", null, "Duration"), h("dd", null, fmtDuration(s.endTime - s.startTime)),
+            row("cancelable", "Cancelable"),
+            h("dt", null, "Contract"), h("dd", null, addrLink(cfg.contractAddress)),
+            h("dt", null, "Created in"), created)),
+      );
+
+      const render = (ms) => {
+        const now = Math.floor(ms / 1000);
+        const streamed = streamedAtMs(s, ms);
+        const avail = streamed > s.withdrawn ? streamed - s.withdrawn : 0n;
+        const label = statusLabel(s, now);
+        badge.set(label);
+        streamedC.set(streamed);
+        availC.set(avail);
+        bar.set(s, streamed, label === "Streaming");
+        if (s.canceled) setText(timeline, "Canceled");
+        else if (now < s.startTime) setText(timeline, `Starts in ${fmtDuration(s.startTime - now)}`);
+        else if (now < s.endTime) setText(timeline, `Ends in ${fmtDuration(s.endTime - now)}`);
+        else setText(timeline, `Ended ${fmtDuration(now - s.endTime)} ago`);
+        setText(v.deposit, `${fmt(s.deposit, 6)} zkLTC`);
+        setText(v.withdrawn, `${fmt(s.withdrawn, 6)} zkLTC`);
+        if (v.refunded) setText(v.refunded, `${fmt(s.refunded, 6)} zkLTC`);
+        const refundable = refundableAt(s, now);
+        setText(v.cancelable, s.canceled ? "Canceled" : refundable > 0n ? "Yes, the sender can still cancel" : s.cancelable ? "No longer (stream ended)" : "No (final)");
+        actions.update(s, now);
+      };
+      render(Date.now());
+      stopTicker = startTicker(render);
+      sync = setInterval(refresh, 15000);
+
+      // Best effort: find the creation transaction from the StreamCreated event.
+      state.read.queryFilter(state.read.filters.StreamCreated(id), cfg.deployBlock, "latest")
+        .then((logs) => {
+          if (!alive || !logs.length) { created.textContent = "n/a"; return; }
+          created.replaceChildren(h("a", { class: "mono", href: txUrl(logs[0].transactionHash), target: "_blank", rel: "noopener noreferrer" }, `tx ${shortAddr(logs[0].transactionHash)}`));
+        })
+        .catch(() => { if (alive) created.textContent = "n/a"; });
+    }
+
+    async function refresh() {
+      try {
+        const next = await fetchStream(id);
+        if (alive) s = next;
+      } catch { /* keep last known data */ }
+    }
+
+    load();
+    return () => { alive = false; if (stopTicker) stopTicker(); if (sync) clearInterval(sync); };
+  }
+
+  /* ---------- How it works ---------- */
+
+  function viewHow(root) {
+    const step = (n, title, text) => h("div", { class: "card step" }, h("div", { class: "n" }, n), h("h3", null, title), h("p", null, text));
+    const risk = (title, text) => h("li", null, h("b", null, title), text);
+    root.append(
+      pageHead("How it works", "LitStreams moves native zkLTC from a sender to a recipient continuously, second by second, with no middleman."),
+      h("div", { class: "steps" },
+        step(1, "Lock", "The sender deposits zkLTC into the contract and picks a recipient, a start and a duration."),
+        step(2, "Stream", "From the start, the recipient's share grows every second, in a straight line, until the end. No keepers, no fees."),
+        step(3, "Withdraw", "The recipient withdraws what has streamed at any time. Anyone can trigger a payout, but the money always goes to the recipient."),
+        step(4, "Cancel (optional)", "If the stream is cancelable, the sender can stop it. The unstreamed part returns to the sender; the streamed part stays with the recipient.")),
+      h("div", { class: "card" },
+        h("h2", null, "Read this before you use it"),
+        h("ul", { class: "risks" },
+          risk("Testnet only. No real value. ", "This runs on the LitVM LiteForge testnet. zkLTC here is not worth anything. Do not send real funds anywhere."),
+          risk("Unaudited. ", "The contract was reviewed internally and tested heavily, but it has not had an external audit. There is no mainnet version."),
+          risk("Cancelable vs. not cancelable. ", "A cancelable stream can be stopped by the sender at any moment, so the recipient should only count on what has already streamed. A non-cancelable stream is a commitment: the sender can never take the money back. A sender can also “renounce” the right to cancel later."),
+          risk("Losing the recipient key. ", "The recipient address cannot be changed. If its key is lost, the streamed money is stuck forever. The sender can only reclaim the unstreamed part, and only if the stream is cancelable."),
+          risk("Time comes from the sequencer. ", "Streams run on block timestamps from the LitVM sequencer, not on your clock. Counters on this site use your device clock and re-sync with the chain, so they can differ by a second or two."),
+          risk("Rounding. ", "Amounts round down until the stream ends. After the end time the recipient can withdraw exactly the full deposit."),
+          risk("Spam streams. ", "Anyone can create tiny streams to any address. The lists on this site hide “dust” (under 0.0001 zkLTC) by default."),
+          risk("Trust assumptions. ", "LitVM uses an AnyTrust data layer and a bridge, which add their own trust assumptions. The LitStreams contract itself has no owner, no admin, no pause, no upgrades and no fees."))),
+      h("p", { class: "hint", style: "margin-top:1rem" }, "Contract: ", addrLink(cfg.contractAddress), " (source verified on the explorer)."),
+    );
   }
 
   /* ---------- boot ---------- */
@@ -687,15 +1059,14 @@
       const res = await fetch("abi/LitStreams.json");
       state.abi = await res.json();
     } catch {
-      $("#view").replaceChildren(h("div", { class: "card empty" }, "Could not load the contract ABI. Reload the page."));
+      $("#view").replaceChildren(h("div", { class: "card empty" }, h("h2", null, "Could not load the contract ABI"), h("p", null, "Reload the page.")));
       return;
     }
-    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl, cfg.chainId, { staticNetwork: true });
-    state.rpc = provider;
-    state.read = new ethers.Contract(cfg.contractAddress, state.abi, provider);
+    state.rpc = new ethers.JsonRpcProvider(cfg.rpcUrl, cfg.chainId, { staticNetwork: true });
+    state.read = new ethers.Contract(cfg.contractAddress, state.abi, state.rpc);
 
     $("#footer-contract").replaceChildren("Contract ", addrLink(cfg.contractAddress));
-    $("#connect-btn").addEventListener("click", connect);
+    $("#connect-btn").addEventListener("click", onWalletClick);
 
     const eth = injected();
     if (eth && eth.on) {
