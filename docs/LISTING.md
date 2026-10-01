@@ -12,6 +12,7 @@ Copy for the **"Submit Your App"** form on [testnet.litvm.com](https://testnet.l
 | **Website** | https://litstreams.site/ |
 | **Source code** | https://github.com/batatnoy-create/litstreams |
 | **Contract** | `0xB3146ab6401d69DC7EFCa457a637760d192D1fFD` ([explorer, source verified](https://liteforge.explorer.caldera.xyz/address/0xb3146ab6401d69dc7efca457a637760d192d1ffd)) |
+| **X** | [@LitStreamsGo](https://x.com/LitStreamsGo) |
 | **Network** | LitVM LiteForge testnet (chain ID 4441) |
 | **Logo** | `web/assets/logo-512.png` (512×512) or `web/assets/logo.svg` |
 | **Cover / OG image** | `web/assets/og-image.png` (1200×630) |
