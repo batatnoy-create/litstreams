@@ -3,7 +3,8 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {LitStreams} from "../contracts/LitStreams.sol";
-import {RejectingReceiver, ReentrantRecipient, ReentrantSender, RejectingSender} from "./utils/Mocks.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {RejectingReceiver, ReentrantActor, RejectingSender} from "./utils/Mocks.sol";
 
 abstract contract LitStreamsBase is Test {
     LitStreams internal streams;
@@ -423,8 +424,9 @@ contract LitStreamsUnitTest is LitStreamsBase {
         assertEq(recipient.balance, 0, "cancel must not push funds to the recipient");
         assertEq(address(streams).balance, 0.3 ether);
         LitStreams.Stream memory s = streams.getStream(id);
-        assertEq(uint256(s.refunded) + streams.streamedAmountOf(id), s.deposit);
+        assertEq(s.refunded, 0.7 ether);
         assertTrue(s.canceled);
+        assertTrue(s.cancelable, "cancelable is not cleared on cancel (DECISIONS.md, M2)");
         assertEq(uint8(streams.statusOf(id)), uint8(LitStreams.Status.Canceled));
 
         // Streamed amount is frozen after cancel.
@@ -445,6 +447,9 @@ contract LitStreamsUnitTest is LitStreamsBase {
         vm.prank(recipient);
         streams.withdrawMax(id); // 0.2
         vm.warp(T0 + 500);
+        // recipientStreamed is the total streamed (0.5), including the 0.2 already withdrawn.
+        vm.expectEmit(true, true, true, true, address(streams));
+        emit LitStreams.Canceled(id, sender, recipient, 0.5 ether, 0.5 ether);
         vm.prank(sender);
         streams.cancel(id); // refund 0.5
         assertEq(streams.getStream(id).refunded, 0.5 ether);
@@ -518,6 +523,18 @@ contract LitStreamsUnitTest is LitStreamsBase {
         vm.stopPrank();
     }
 
+    /// Renouncing after the end is allowed (DECISIONS.md, M2): it changes nothing, cancel is already impossible.
+    function test_Renounce_AfterEndIsAllowed() public {
+        uint256 id = _createNow(1 ether, HOUR);
+        vm.warp(T0 + HOUR);
+        vm.expectEmit(true, false, false, false, address(streams));
+        emit LitStreams.Renounced(id);
+        vm.prank(sender);
+        streams.renounce(id);
+        assertFalse(streams.getStream(id).cancelable);
+        assertEq(streams.withdrawableAmountOf(id), 1 ether);
+    }
+
     /*//////////////////////////////////////////////////////////////
                                  STATUS
     //////////////////////////////////////////////////////////////*/
@@ -557,65 +574,166 @@ contract LitStreamsUnitTest is LitStreamsBase {
                                REENTRANCY
     //////////////////////////////////////////////////////////////*/
 
+    bytes4 internal guardError = ReentrancyGuard.ReentrancyGuardReentrantCall.selector;
+
     function _streamTo(address to, uint128 deposit, uint40 duration) internal returns (uint256 id) {
         vm.prank(sender);
         id = streams.createStream{value: deposit}(to, 0, duration, true);
     }
 
-    function test_Reentrancy_RecipientCannotDoubleWithdraw() public {
-        ReentrantRecipient attacker = new ReentrantRecipient(streams);
-        uint256 id = _streamTo(address(attacker), 1 ether, 1000);
-        vm.warp(T0 + 500);
+    /// A payout re-entered from inside a payout hits the guard, even on another stream where the inner call
+    /// would otherwise succeed. Covers withdraw and withdrawMax as both the outer and the inner call.
+    function test_Reentrancy_PayoutIntoPayout_HitsGuard() public {
+        for (uint256 outer; outer < 2; ++outer) {
+            for (uint256 inner; inner < 2; ++inner) {
+                ReentrantActor actor = new ReentrantActor(streams);
+                uint256 a = _streamTo(address(actor), 1 ether, 1000);
+                uint256 b = _streamTo(address(actor), 1 ether, 1000);
+                vm.warp(vm.getBlockTimestamp() + 500);
 
-        for (uint8 mode = 1; mode <= 2; ++mode) {
-            attacker.arm(id, mode);
-            uint256 before = address(attacker).balance;
-            uint128 expected = streams.withdrawableAmountOf(id);
-            streams.withdrawMax(id);
-            assertTrue(attacker.reentryBlocked());
-            assertEq(address(attacker).balance - before, expected);
-            assertEq(streams.withdrawableAmountOf(id), 0);
-            vm.warp(block.timestamp + 100);
+                actor.arm(inner == 0 ? ReentrantActor.Action.WithdrawMax : ReentrantActor.Action.WithdrawOneWei, b);
+                uint128 bBefore = streams.withdrawableAmountOf(b);
+                if (outer == 0) streams.withdrawMax(a);
+                else streams.withdraw(a, 1);
+
+                assertTrue(actor.reentryAttempted());
+                assertEq(actor.reentryError(), guardError);
+                assertEq(actor.timesPaid(), 1);
+                assertEq(streams.withdrawableAmountOf(b), bBefore);
+            }
         }
-        assertEq(attacker.timesPaid(), 2);
-        assertEq(address(streams).balance + address(attacker).balance, 1 ether);
     }
 
-    function test_Reentrancy_RecipientCannotCancelDuringPayout() public {
-        // The recipient is not the sender, so cancel would fail anyway; the guard must also hold.
-        ReentrantRecipient attacker = new ReentrantRecipient(streams);
-        uint256 id = _streamTo(address(attacker), 1 ether, 1000);
+    function test_Reentrancy_RecipientCannotDoubleWithdraw() public {
+        ReentrantActor actor = new ReentrantActor(streams);
+        uint256 id = _streamTo(address(actor), 1 ether, 1000);
         vm.warp(T0 + 500);
-        attacker.arm(id, 3);
-        streams.withdrawMax(id);
-        assertTrue(attacker.reentryBlocked());
-        assertFalse(streams.getStream(id).canceled);
+
+        actor.arm(ReentrantActor.Action.WithdrawMax, id);
+        streams.withdraw(id, 0.2 ether);
+        assertEq(actor.reentryError(), guardError);
+        assertEq(address(actor).balance, 0.2 ether);
+        assertEq(streams.getStream(id).withdrawn, 0.2 ether);
+        assertEq(streams.withdrawableAmountOf(id), 0.3 ether);
+    }
+
+    /// A cancel re-entered into cancel, withdraw or withdrawMax hits the guard.
+    function test_Reentrancy_CancelIntoAnything_HitsGuard() public {
+        for (uint256 inner; inner < 3; ++inner) {
+            ReentrantActor actor = new ReentrantActor{value: 10 ether}(streams);
+            uint256 a = actor.create(recipient, 1 ether, 1000);
+            uint256 b = actor.create(recipient, 1 ether, 1000);
+            vm.warp(vm.getBlockTimestamp() + 400);
+
+            ReentrantActor.Action act = inner == 0
+                ? ReentrantActor.Action.Cancel
+                : inner == 1 ? ReentrantActor.Action.WithdrawMax : ReentrantActor.Action.WithdrawOneWei;
+            actor.arm(act, b);
+            actor.cancel(a);
+
+            assertEq(actor.reentryError(), guardError);
+            assertEq(actor.timesPaid(), 1);
+            assertFalse(streams.getStream(b).canceled);
+            assertEq(streams.getStream(b).withdrawn, 0);
+        }
     }
 
     function test_Reentrancy_SenderCannotDoubleRefund() public {
-        ReentrantSender attacker = new ReentrantSender{value: 10 ether}(streams);
-        uint256 id = attacker.create(recipient, 1 ether, 1000);
+        ReentrantActor actor = new ReentrantActor{value: 10 ether}(streams);
+        uint256 id = actor.create(recipient, 1 ether, 1000);
         vm.warp(T0 + 400);
 
-        attacker.arm(id, 1); // re-enter cancel
-        uint256 before = address(attacker).balance;
-        attacker.cancel(id);
-        assertTrue(attacker.reentryBlocked());
-        assertEq(attacker.timesRefunded(), 1);
-        assertEq(address(attacker).balance - before, 0.6 ether);
+        actor.arm(ReentrantActor.Action.Cancel, id);
+        uint256 before = address(actor).balance;
+        actor.cancel(id);
+        assertEq(actor.reentryError(), guardError);
+        assertEq(actor.timesPaid(), 1);
+        assertEq(address(actor).balance - before, 0.6 ether);
         assertEq(address(streams).balance, 0.4 ether);
     }
 
-    function test_Reentrancy_SenderCannotWithdrawDuringRefund() public {
-        ReentrantSender attacker = new ReentrantSender{value: 10 ether}(streams);
-        uint256 id = attacker.create(recipient, 1 ether, 1000);
+    /// Checks-effects-interactions: seen from inside the payout, the stream already shows the payout.
+    function test_Reentrancy_StateIsFinalDuringWithdrawPayout() public {
+        ReentrantActor actor = new ReentrantActor(streams);
+        uint256 id = _streamTo(address(actor), 1 ether, 1000);
+        vm.warp(T0 + 500);
+        actor.observe(id);
+
+        streams.withdraw(id, 0.2 ether);
+        assertEq(actor.seen().withdrawn, 0.2 ether);
+        assertEq(actor.seenWithdrawable(), 0.3 ether);
+
+        streams.withdrawMax(id);
+        assertEq(actor.seen().withdrawn, 0.5 ether);
+        assertEq(actor.seenWithdrawable(), 0);
+    }
+
+    /// Checks-effects-interactions: seen from inside the refund, the stream is already canceled.
+    function test_Reentrancy_StateIsFinalDuringCancelRefund() public {
+        ReentrantActor actor = new ReentrantActor{value: 10 ether}(streams);
+        uint256 id = actor.create(recipient, 1 ether, 1000);
+        vm.warp(T0 + 400);
+        actor.observe(id);
+
+        actor.cancel(id);
+        LitStreams.Stream memory seen = actor.seen();
+        assertTrue(seen.canceled);
+        assertEq(seen.refunded, 0.6 ether);
+        assertEq(actor.seenWithdrawable(), 0.4 ether);
+    }
+
+    /// createStream is not guarded. Re-entering it from a payout is harmless: the outer call has already
+    /// made its state changes, and the accounting still adds up.
+    function test_Reentrancy_CreateStreamDuringPayoutIsSafe() public {
+        ReentrantActor actor = new ReentrantActor(streams);
+        uint256 id = _streamTo(address(actor), 1 ether, 1000);
+        vm.warp(T0 + 500);
+
+        actor.armCreate(stranger);
+        streams.withdrawMax(id);
+
+        assertTrue(actor.reentrySucceeded());
+        uint256 newId = actor.createdId();
+        assertEq(newId, id + 1);
+        LitStreams.Stream memory s = streams.getStream(newId);
+        assertEq(s.sender, address(actor));
+        assertEq(s.recipient, stranger);
+        assertEq(s.deposit, 0.5 ether);
+        assertEq(streams.getStream(id).withdrawn, 0.5 ether);
+        assertEq(address(actor).balance, 0);
+        assertEq(address(streams).balance, 1 ether); // 0.5 still owed on `id` + 0.5 on `newId`
+    }
+
+    /// renounce and createStream are not guarded. Re-entering them from a cancel refund is harmless.
+    function test_Reentrancy_RenounceAndCreateDuringRefundAreSafe() public {
+        ReentrantActor actor = new ReentrantActor{value: 10 ether}(streams);
+        uint256 a = actor.create(recipient, 1 ether, 1000);
+        uint256 b = actor.create(recipient, 1 ether, 1000);
         vm.warp(T0 + 400);
 
-        attacker.arm(id, 2); // re-enter withdrawMax
-        attacker.cancel(id);
-        assertTrue(attacker.reentryBlocked());
-        assertEq(recipient.balance, 0);
-        assertEq(streams.withdrawableAmountOf(id), 0.4 ether);
+        // Renounce another stream: works.
+        actor.arm(ReentrantActor.Action.Renounce, b);
+        actor.cancel(a);
+        assertTrue(actor.reentrySucceeded());
+        assertFalse(streams.getStream(b).cancelable);
+        assertEq(streams.getStream(a).refunded, 0.6 ether);
+
+        // Renounce the stream being canceled: it is already marked canceled.
+        uint256 c = actor.create(recipient, 1 ether, 1000);
+        actor.arm(ReentrantActor.Action.Renounce, c);
+        actor.cancel(c);
+        assertFalse(actor.reentrySucceeded());
+        assertEq(actor.reentryError(), LitStreams.AlreadyCanceled.selector);
+
+        // Re-stream the refund: works, and the new stream holds exactly the refund.
+        uint256 d = actor.create(recipient, 1 ether, 1000);
+        actor.armCreate(stranger);
+        actor.cancel(d); // canceled at its start: full refund of 1 ether
+        assertTrue(actor.reentrySucceeded());
+        assertEq(streams.getStream(actor.createdId()).deposit, 1 ether);
+
+        // Owed: a 0.4 (streamed), b 1, c 0, d 0, re-streamed 1.
+        assertEq(address(streams).balance, 2.4 ether);
     }
 
     /*//////////////////////////////////////////////////////////////

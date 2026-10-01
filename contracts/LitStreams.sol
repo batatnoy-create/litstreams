@@ -251,13 +251,19 @@ contract LitStreams is ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Returns the full stream struct.
+    /// @dev `cancelable` is not cleared by {cancel}; check `canceled` (or use {refundableAmountOf} > 0 as the
+    ///      "can cancel now" signal).
     /// @param id The stream id. Reverts with StreamNotFound if it does not exist.
+    /// @return The stored stream.
     function getStream(uint256 id) external view exists(id) returns (Stream memory) {
         return _streams[id];
     }
 
     /// @notice Returns the stream's lifecycle status.
+    /// @dev Checked in this order: Depleted, Canceled, Pending, Settled, Streaming. A canceled stream whose
+    ///      funds are all paid out reports Depleted; read `canceled` from {getStream} to tell it apart.
     /// @param id The stream id. Reverts with StreamNotFound if it does not exist.
+    /// @return The current status.
     function statusOf(uint256 id) external view exists(id) returns (Status) {
         Stream storage s = _streams[id];
         if (uint256(s.withdrawn) + s.refunded == s.deposit) return Status.Depleted;
@@ -270,6 +276,7 @@ contract LitStreams is ReentrancyGuard {
     /// @notice Total amount streamed to the recipient so far (withdrawn or not).
     /// @dev Frozen at cancel time for canceled streams. Rounds down until endTime.
     /// @param id The stream id. Reverts with StreamNotFound if it does not exist.
+    /// @return Streamed amount in wei.
     function streamedAmountOf(uint256 id) public view exists(id) returns (uint128) {
         Stream storage s = _streams[id];
         if (s.canceled) return s.deposit - s.refunded;
@@ -282,12 +289,14 @@ contract LitStreams is ReentrancyGuard {
 
     /// @notice Amount the recipient can withdraw right now.
     /// @param id The stream id. Reverts with StreamNotFound if it does not exist.
+    /// @return Withdrawable amount in wei.
     function withdrawableAmountOf(uint256 id) public view exists(id) returns (uint128) {
         return streamedAmountOf(id) - _streams[id].withdrawn;
     }
 
     /// @notice Amount the sender would get back by canceling right now (0 if the stream cannot be canceled).
     /// @param id The stream id. Reverts with StreamNotFound if it does not exist.
+    /// @return Refundable amount in wei. It is > 0 exactly when {cancel} would succeed for the sender.
     function refundableAmountOf(uint256 id) external view exists(id) returns (uint128) {
         Stream storage s = _streams[id];
         if (!s.cancelable || s.canceled || block.timestamp >= s.endTime) return 0;
@@ -295,25 +304,35 @@ contract LitStreams is ReentrancyGuard {
     }
 
     /// @notice Number of streams ever created by `sender`.
+    /// @param sender The sender address.
+    /// @return Length of the sender's id list.
     function sentCount(address sender) external view returns (uint256) {
         return _sentIds[sender].length;
     }
 
     /// @notice Number of streams ever created with `recipient` as the recipient.
+    /// @param recipient The recipient address.
+    /// @return Length of the recipient's id list.
     function receivedCount(address recipient) external view returns (uint256) {
         return _receivedIds[recipient].length;
     }
 
     /// @notice Paginated list of stream ids created by `sender`, oldest first.
+    /// @dev Anyone can add entries to these lists; callers should read fixed-size pages.
+    /// @param sender The sender address.
     /// @param offset Index of the first id to return. Out-of-range offsets return an empty array.
     /// @param limit Maximum number of ids to return.
+    /// @return Up to `limit` ids starting at index `offset`.
     function sentIds(address sender, uint256 offset, uint256 limit) external view returns (uint256[] memory) {
         return _slice(_sentIds[sender], offset, limit);
     }
 
     /// @notice Paginated list of stream ids received by `recipient`, oldest first.
+    /// @dev Anyone can add entries to these lists (spam streams); callers should read fixed-size pages.
+    /// @param recipient The recipient address.
     /// @param offset Index of the first id to return. Out-of-range offsets return an empty array.
     /// @param limit Maximum number of ids to return.
+    /// @return Up to `limit` ids starting at index `offset`.
     function receivedIds(address recipient, uint256 offset, uint256 limit) external view returns (uint256[] memory) {
         return _slice(_receivedIds[recipient], offset, limit);
     }

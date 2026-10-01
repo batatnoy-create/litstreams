@@ -10,47 +10,34 @@ contract RejectingReceiver {
     }
 }
 
-/// @dev A recipient that tries to re-enter LitStreams while being paid.
-///      It swallows the reentrant revert, so the outer call can still succeed and we can check
-///      that the second payout never happened.
-contract ReentrantRecipient {
+/// @dev A counterparty (sender or recipient) that runs one scripted call back into LitStreams while it is
+///      being paid. It records how that call ended (success, or the revert selector) and snapshots a stream
+///      as seen from inside the payment, so tests can check both the guard and checks-effects-interactions.
+contract ReentrantActor {
+    enum Action {
+        None,
+        WithdrawMax,
+        WithdrawOneWei,
+        Cancel,
+        Renounce,
+        CreateStream
+    }
+
     LitStreams public immutable streams;
-    uint256 public targetId;
-    uint8 public mode; // 0 = off, 1 = withdrawMax, 2 = withdraw(1 wei), 3 = cancel
-    bool public reentryBlocked;
+
+    Action public action;
+    uint256 public targetId; // stream the reentrant call acts on
+    address public createRecipient; // recipient for Action.CreateStream
+    uint256 public observeId; // stream snapshotted during the payment (0 = none)
+
     uint256 public timesPaid;
+    bool public reentryAttempted;
+    bool public reentrySucceeded;
+    bytes4 public reentryError;
+    uint256 public createdId;
 
-    constructor(LitStreams streams_) {
-        streams = streams_;
-    }
-
-    function arm(uint256 id, uint8 mode_) external {
-        targetId = id;
-        mode = mode_;
-    }
-
-    receive() external payable {
-        timesPaid++;
-        uint8 m = mode;
-        if (m == 0) return;
-        mode = 0; // try only once
-        if (m == 1) {
-            try streams.withdrawMax(targetId) {} catch { reentryBlocked = true; }
-        } else if (m == 2) {
-            try streams.withdraw(targetId, 1) {} catch { reentryBlocked = true; }
-        } else if (m == 3) {
-            try streams.cancel(targetId) {} catch { reentryBlocked = true; }
-        }
-    }
-}
-
-/// @dev A sender contract that tries to re-enter LitStreams while receiving its cancel refund.
-contract ReentrantSender {
-    LitStreams public immutable streams;
-    uint256 public targetId;
-    uint8 public mode; // 0 = off, 1 = cancel again, 2 = withdrawMax
-    bool public reentryBlocked;
-    uint256 public timesRefunded;
+    LitStreams.Stream internal _seen;
+    uint128 public seenWithdrawable;
 
     constructor(LitStreams streams_) payable {
         streams = streams_;
@@ -64,20 +51,59 @@ contract ReentrantSender {
         streams.cancel(id);
     }
 
-    function arm(uint256 id, uint8 mode_) external {
-        targetId = id;
-        mode = mode_;
+    /// @dev Arms one reentrant call for the next payment this contract receives.
+    function arm(Action action_, uint256 targetId_) external {
+        action = action_;
+        targetId = targetId_;
+    }
+
+    function armCreate(address recipient) external {
+        action = Action.CreateStream;
+        createRecipient = recipient;
+    }
+
+    function observe(uint256 id) external {
+        observeId = id;
+    }
+
+    function seen() external view returns (LitStreams.Stream memory) {
+        return _seen;
     }
 
     receive() external payable {
-        timesRefunded++;
-        uint8 m = mode;
-        if (m == 0) return;
-        mode = 0;
-        if (m == 1) {
-            try streams.cancel(targetId) {} catch { reentryBlocked = true; }
-        } else if (m == 2) {
-            try streams.withdrawMax(targetId) {} catch { reentryBlocked = true; }
+        timesPaid++;
+        if (observeId != 0) {
+            _seen = streams.getStream(observeId);
+            seenWithdrawable = streams.withdrawableAmountOf(observeId);
+        }
+
+        Action a = action;
+        if (a == Action.None) return;
+        action = Action.None; // only once
+
+        bytes memory data;
+        uint256 value;
+        if (a == Action.WithdrawMax) {
+            data = abi.encodeCall(LitStreams.withdrawMax, (targetId));
+        } else if (a == Action.WithdrawOneWei) {
+            data = abi.encodeCall(LitStreams.withdraw, (targetId, 1));
+        } else if (a == Action.Cancel) {
+            data = abi.encodeCall(LitStreams.cancel, (targetId));
+        } else if (a == Action.Renounce) {
+            data = abi.encodeCall(LitStreams.renounce, (targetId));
+        } else {
+            // Re-stream the payment just received.
+            data = abi.encodeCall(LitStreams.createStream, (createRecipient, 0, 60, true));
+            value = msg.value;
+        }
+
+        reentryAttempted = true;
+        (bool ok, bytes memory ret) = address(streams).call{value: value}(data);
+        reentrySucceeded = ok;
+        if (ok) {
+            if (a == Action.CreateStream) createdId = abi.decode(ret, (uint256));
+        } else {
+            reentryError = bytes4(ret);
         }
     }
 }

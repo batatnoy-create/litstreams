@@ -5,6 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {LitStreams} from "../contracts/LitStreams.sol";
 
 /// @dev Drives LitStreams with random but valid actions and tracks ghost totals.
+///      Every action filters its own preconditions, so with `fail_on_revert = true` any revert from the
+///      contract fails the suite. Withdraw and cancel pick a stream where the action has an effect, so
+///      few calls are no-ops.
 contract Handler is Test {
     LitStreams public immutable streams;
 
@@ -17,7 +20,8 @@ contract Handler is Test {
 
     uint256 public ghostDeposited;
     uint256 public ghostWithdrawn;
-    uint256 public ghostRefunded;
+    uint256 public ghostRefunded; // measured: what actually arrived at the senders
+    uint256 public ghostExpectedRefunded; // computed from the formula, independently of the contract
     uint256 public ghostForceSent;
     bool public monotonicViolated;
 
@@ -36,12 +40,27 @@ contract Handler is Test {
         return ids.length;
     }
 
+    function senderCount() external view returns (uint256) {
+        return senders.length;
+    }
+
+    function senderAt(uint256 i) external view returns (address) {
+        return senders[i];
+    }
+
     function recipientCount() external view returns (uint256) {
         return recipients.length;
     }
 
     function recipientAt(uint256 i) external view returns (address) {
         return recipients[i];
+    }
+
+    /// @dev Streamed amount of a non-canceled stream at the current time, from the stored schedule only.
+    function expectedStreamed(LitStreams.Stream memory s) public view returns (uint256) {
+        if (block.timestamp <= s.startTime) return 0;
+        if (block.timestamp >= s.endTime) return s.deposit;
+        return (uint256(s.deposit) * (block.timestamp - s.startTime)) / (s.endTime - s.startTime);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -72,9 +91,7 @@ contract Handler is Test {
     }
 
     function withdraw(uint256 idSeed, uint256 callerSeed, uint128 amount) external checkMonotonic {
-        if (ids.length == 0) return;
-        uint256 id = ids[idSeed % ids.length];
-        uint128 available = streams.withdrawableAmountOf(id);
+        (uint256 id, uint128 available) = _pickWithdrawable(idSeed);
         if (available == 0) return;
         amount = uint128(bound(amount, 1, available));
         vm.prank(_anyCaller(callerSeed, id));
@@ -83,22 +100,35 @@ contract Handler is Test {
     }
 
     function withdrawMax(uint256 idSeed, uint256 callerSeed) external checkMonotonic {
-        if (ids.length == 0) return;
-        uint256 id = ids[idSeed % ids.length];
-        if (streams.withdrawableAmountOf(id) == 0) return;
+        (uint256 id, uint128 available) = _pickWithdrawable(idSeed);
+        if (available == 0) return;
         vm.prank(_anyCaller(callerSeed, id));
         ghostWithdrawn += streams.withdrawMax(id);
     }
 
-    function cancel(uint256 idSeed) external checkMonotonic {
-        if (ids.length == 0) return;
-        uint256 id = ids[idSeed % ids.length];
-        LitStreams.Stream memory s = streams.getStream(id);
-        if (!s.cancelable || s.canceled || block.timestamp >= s.endTime) return;
-        uint128 refund = streams.refundableAmountOf(id);
-        vm.prank(s.sender);
-        streams.cancel(id);
-        ghostRefunded += refund;
+    /// Cancels the first still-cancelable stream from a random index. With `warpIntoStream`, it first
+    /// moves time to a random point before the stream's end, so mid-stream cancels are common.
+    function cancel(uint256 idSeed, uint256 warpSeed, bool warpIntoStream) external checkMonotonic {
+        uint256 n = ids.length;
+        for (uint256 k; k < n; ++k) {
+            uint256 id = ids[(idSeed % n + k) % n];
+            LitStreams.Stream memory s = streams.getStream(id);
+            uint256 nowTs = vm.getBlockTimestamp();
+            if (!s.cancelable || s.canceled || nowTs >= s.endTime) continue;
+
+            if (warpIntoStream) {
+                uint256 from = nowTs > s.startTime ? nowTs : s.startTime;
+                vm.warp(bound(warpSeed, from, uint256(s.endTime) - 1));
+            }
+
+            uint256 expectedRefund = s.deposit - expectedStreamed(s);
+            uint256 before = s.sender.balance;
+            vm.prank(s.sender);
+            streams.cancel(id);
+            ghostRefunded += s.sender.balance - before;
+            ghostExpectedRefunded += expectedRefund;
+            return;
+        }
     }
 
     function renounce(uint256 idSeed) external checkMonotonic {
@@ -124,6 +154,17 @@ contract Handler is Test {
     /*//////////////////////////////////////////////////////////////
                                 HELPERS
     //////////////////////////////////////////////////////////////*/
+
+    /// @dev First stream with something to withdraw, scanning from a random index. (0, 0) if none.
+    function _pickWithdrawable(uint256 seed) internal view returns (uint256, uint128) {
+        uint256 n = ids.length;
+        for (uint256 k; k < n; ++k) {
+            uint256 id = ids[(seed % n + k) % n];
+            uint128 available = streams.withdrawableAmountOf(id);
+            if (available > 0) return (id, available);
+        }
+        return (0, 0);
+    }
 
     function _anyCaller(uint256 seed, uint256 id) internal view returns (address) {
         uint256 pick = seed % 3;
@@ -152,6 +193,16 @@ contract LitStreamsInvariantTest is Test {
         vm.warp(1_700_000_000);
         streams = new LitStreams();
         handler = new Handler(streams);
+
+        bytes4[] memory selectors = new bytes4[](7);
+        selectors[0] = Handler.createStream.selector;
+        selectors[1] = Handler.withdraw.selector;
+        selectors[2] = Handler.withdrawMax.selector;
+        selectors[3] = Handler.cancel.selector;
+        selectors[4] = Handler.renounce.selector;
+        selectors[5] = Handler.warp.selector;
+        selectors[6] = Handler.forceSend.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
 
@@ -195,6 +246,17 @@ contract LitStreamsInvariantTest is Test {
         assertFalse(handler.monotonicViolated());
     }
 
+    /// The contract's streamed amount matches the formula recomputed from each stream's stored schedule.
+    function invariant_StreamedMatchesFormula() public view {
+        uint256 n = handler.idCount();
+        for (uint256 i; i < n; ++i) {
+            uint256 id = handler.ids(i);
+            LitStreams.Stream memory s = streams.getStream(id);
+            if (s.canceled) continue;
+            assertEq(streams.streamedAmountOf(id), handler.expectedStreamed(s));
+        }
+    }
+
     /// Recipients only ever receive what was withdrawn for them.
     function invariant_RecipientsGetWithdrawals() public view {
         uint256 total;
@@ -203,6 +265,17 @@ contract LitStreamsInvariantTest is Test {
             total += handler.recipientAt(i).balance;
         }
         assertEq(total, handler.ghostWithdrawn());
+    }
+
+    /// Refunds arrive at the senders, and equal the refunds computed independently from the formula.
+    function invariant_RefundsReachSenders() public view {
+        uint256 total;
+        uint256 n = handler.senderCount();
+        for (uint256 i; i < n; ++i) {
+            total += handler.senderAt(i).balance;
+        }
+        assertEq(total, handler.ghostRefunded());
+        assertEq(handler.ghostRefunded(), handler.ghostExpectedRefunded());
     }
 
     /// Every created stream got a sequential id.

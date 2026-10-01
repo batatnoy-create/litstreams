@@ -51,6 +51,44 @@ Status: `Depleted` (withdrawn + refunded == deposit) → `Canceled` → `Pending
 
 Plain transfers and unknown calls revert with `DirectTransferNotAllowed`.
 
+## Events
+
+| Event | Fields (`indexed` marked) | Notes |
+| --- | --- | --- |
+| `StreamCreated` | `id`ⁱ, `sender`ⁱ, `recipient`ⁱ, `deposit`, `startTime`, `endTime`, `cancelable` | `startTime` is the resolved start (the block time when 0 was passed). |
+| `Withdrawn` | `id`ⁱ, `recipient`ⁱ, `caller`, `amount` | `caller` is whoever sent the transaction; the funds went to `recipient`. |
+| `Canceled` | `id`ⁱ, `sender`ⁱ, `recipient`ⁱ, `senderRefund`, `recipientStreamed` | `recipientStreamed` is the total streamed at cancel time, **including** anything already withdrawn. |
+| `Renounced` | `id`ⁱ | |
+
+## Errors
+
+| Error | When |
+| --- | --- |
+| `ZeroRecipient`, `SelfStream`, `InvalidRecipient` | `createStream`: recipient is zero, the caller, or the contract. |
+| `ZeroDeposit`, `DepositTooLarge` | `createStream`: `msg.value` is 0 or above `type(uint128).max`. |
+| `StartInPast`, `StartTooFar` | `createStream`: non-zero `startTime` before now, or after now + `MAX_START_DELAY`. |
+| `DurationOutOfRange` | `createStream`: duration outside `[MIN_DURATION, MAX_DURATION]`. |
+| `StreamNotFound` | Any per-id function or view with an unknown id. |
+| `NotSender` | `cancel` / `renounce` by anyone but the sender. |
+| `AlreadyCanceled`, `NotCancelable`, `StreamEnded` | `cancel` (and `renounce`, except `StreamEnded`), checked in that order after `NotSender`. |
+| `ZeroAmount`, `AmountExceedsWithdrawable` | `withdraw` with 0 or too much; `withdrawMax` with nothing to withdraw (`ZeroAmount`). |
+| `TransferFailed` | The zkLTC transfer to the recipient (withdraw) or sender (cancel) failed. |
+| `DirectTransferNotAllowed` | Plain transfer or unknown function call. |
+| `ReentrancyGuardReentrantCall` (OpenZeppelin) | Re-entering `withdraw`, `withdrawMax` or `cancel` during a payout. |
+
+## Edge semantics (for UIs and integrators)
+
+- At exactly `startTime` the status is `Streaming` while the streamed amount is still 0.
+- A canceled stream whose funds are all paid out reports `Depleted`, not `Canceled`. This includes a stream
+  canceled before its start (full refund at once). Read `canceled` from `getStream` to label it "Canceled".
+- `cancel` does not clear `cancelable`. The single reliable "can cancel now" signal is
+  `refundableAmountOf(id) > 0` (exactly equivalent to `cancelable && !canceled && now < endTime`, because the
+  refund is at least 1 wei).
+- `renounce` is allowed after `endTime`; it changes nothing at that point.
+- Spam: `deposit` alone says nothing about value. A stream created and canceled at once refunds everything.
+  Measure a stream by `deposit − refunded` and hide canceled streams that streamed nothing (see SECURITY.md).
+- Id lists can be inflated by anyone; read them in fixed-size pages.
+
 ## Later (out of scope for v1)
 
 - **Pocket money preset:** weekly tranches (unlock X every 7 days) instead of linear.

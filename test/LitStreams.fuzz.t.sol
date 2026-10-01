@@ -117,7 +117,7 @@ contract LitStreamsFuzzTest is LitStreamsBase {
         uint256 paid;
 
         for (uint256 i; i < steps.length; ++i) {
-            vm.warp(block.timestamp + bound(steps[i], 0, duration / 4 + 1));
+            vm.warp(vm.getBlockTimestamp() + bound(steps[i], 0, duration / 4 + 1));
             uint128 available = streams.withdrawableAmountOf(id);
             assertEq(uint256(available) + paid, streams.streamedAmountOf(id));
             if (available == 0) continue;
@@ -185,6 +185,40 @@ contract LitStreamsFuzzTest is LitStreamsBase {
         assertEq(recipient.balance + (sender.balance - senderBefore), deposit);
         assertEq(address(streams).balance, 0);
         assertEq(uint8(streams.statusOf(id)), uint8(LitStreams.Status.Depleted));
+    }
+
+    /// `refundableAmountOf > 0` is exactly "the sender's cancel would succeed now". The UI relies on this
+    /// as its single "can cancel" signal, because `cancelable` is not cleared by cancel.
+    function testFuzz_RefundableIffCancelSucceeds(
+        uint128 deposit,
+        uint40 startDelay,
+        uint40 duration,
+        bool cancelable,
+        uint8 action,
+        uint256 actionAt,
+        uint256 checkAt
+    ) public {
+        (deposit, startDelay, duration) = _bounded(deposit, startDelay, duration);
+        uint256 id = _create(deposit, uint40(T0) + startDelay, duration, cancelable);
+        LitStreams.Stream memory s = streams.getStream(id);
+
+        // Optionally change the stream first: 0 = nothing, 1 = cancel, 2 = renounce.
+        actionAt = bound(actionAt, T0, uint256(s.endTime) - 1);
+        vm.warp(actionAt);
+        action = uint8(bound(action, 0, 2));
+        if (cancelable && action == 1) {
+            vm.prank(sender);
+            streams.cancel(id);
+        } else if (cancelable && action == 2) {
+            vm.prank(sender);
+            streams.renounce(id);
+        }
+
+        vm.warp(bound(checkAt, actionAt, uint256(s.endTime) + 1 days));
+        bool canCancel = streams.refundableAmountOf(id) > 0;
+        vm.prank(sender);
+        (bool ok,) = address(streams).call(abi.encodeCall(LitStreams.cancel, (id)));
+        assertEq(ok, canCancel);
     }
 
     /// Only the sender can cancel or renounce.

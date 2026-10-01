@@ -15,6 +15,8 @@ runs = 1000
 [invariant]
 runs = 256
 depth = 64
+# Every handler action filters its own preconditions, so any revert from the contract is a real failure.
+fail_on_revert = true
 
 [lint]
 # The product is time-based by design; LitVM timestamps come from the sequencer (see docs/SECURITY.md).
