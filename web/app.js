@@ -22,7 +22,7 @@
   const MIN_DURATION = 60;
   const MAX_DURATION = 3650 * 86400;
 
-  const state = { abi: null, rpc: null, read: null, account: null, chainId: null, browser: null };
+  const state = { abi: null, rpc: null, read: null, account: null, chainId: null };
 
   /* ---------- tiny DOM helpers ---------- */
 
@@ -278,7 +278,9 @@
       return "Could not reach the LitVM network. Check your connection and try again.";
     }
     if (e.code === -32002) return "Your wallet already has a pending request. Open it and finish or reject it first.";
-    return `Transaction failed: ${(e.shortMessage || e.message || "unknown error").slice(0, 160)}`;
+    const inner = e.error?.message || e.info?.error?.message || e.data?.message;
+    const msg = inner && inner !== e.message ? inner : e.shortMessage || e.message || "unknown error";
+    return `Transaction failed: ${String(msg).slice(0, 200)}`;
   }
 
   /* ---------- wallet and network ---------- */
@@ -292,7 +294,6 @@
       state.chainId = parseInt(await eth.request({ method: "eth_chainId" }), 16);
       const accts = await eth.request({ method: "eth_accounts" });
       state.account = accts && accts[0] ? ethers.getAddress(accts[0]) : null;
-      state.browser = new ethers.BrowserProvider(eth, "any");
     } catch {
       state.account = null;
     }
@@ -371,30 +372,45 @@
     } catch { /* clipboard not available */ }
   }
 
-  /** Returns a contract bound to the wallet signer, or null if the user must still connect / switch. */
-  async function getWrite() {
+  /** Makes sure a wallet is connected and on LitVM LiteForge. Returns false if the user must still act. */
+  async function ensureWallet() {
     if (!state.account) {
       await connect();
-      if (!state.account) return null;
+      if (!state.account) return false;
     }
     if (state.chainId !== cfg.chainId) {
-      if (!(await switchNetwork())) return null;
+      if (!(await switchNetwork())) return false;
     }
-    const signer = await state.browser.getSigner();
-    return new ethers.Contract(cfg.contractAddress, state.abi, signer);
+    return true;
   }
 
-  /** Runs a transaction with pending / success / error feedback. Returns the receipt or null. */
-  async function sendTx(label, send, done) {
-    const write = await getWrite();
-    if (!write) return null;
-    const t = toast("pending", `${label}: confirm in your wallet…`);
+  /**
+   * Sends one contract call with pending / success / error feedback. Returns the receipt or null.
+   * The call is simulated on the public RPC first (readable errors, gas estimate), then handed to the
+   * wallet as a minimal eth_sendTransaction, and the receipt is awaited on the public RPC. This avoids
+   * depending on the wallet's own RPC for anything but signing and broadcasting.
+   */
+  async function sendTx(label, call, done) {
+    if (!(await ensureWallet())) return null;
+    const t = toast("pending", `${label}: preparing…`);
     try {
-      const tx = await send(write);
-      setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(tx.hash));
-      const rc = await tx.wait();
-      if (!rc || rc.status !== 1) throw new Error("Transaction reverted");
-      setToast(t, "success", done ? done(rc) : `${label}: done.`, txUrl(tx.hash));
+      const data = state.read.interface.encodeFunctionData(call.fn, call.args);
+      const value = call.value || 0n;
+      const req = { from: state.account, to: cfg.contractAddress, data, value };
+      const gas = await state.rpc.estimateGas(req); // reverts here with a decodable custom error
+      setToast(t, "pending", `${label}: confirm in your wallet…`);
+      const hash = await injected().request({
+        method: "eth_sendTransaction",
+        params: [{ from: state.account, to: cfg.contractAddress, data, value: ethers.toQuantity(value), gas: ethers.toQuantity((gas * 13n) / 10n) }],
+      });
+      setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(hash));
+      const rc = await state.rpc.waitForTransaction(hash, 1, 180000);
+      if (!rc) {
+        setToast(t, "pending", `${label}: still not confirmed after 3 minutes. Check the explorer.`, txUrl(hash));
+        return null;
+      }
+      if (rc.status !== 1) throw new Error("The transaction was reverted on chain.");
+      setToast(t, "success", done ? done(rc) : `${label}: done.`, txUrl(hash));
       return rc;
     } catch (e) {
       setToast(t, "error", humanError(e));
@@ -445,7 +461,7 @@
         });
         if (!ok) return;
         label = `Cancel stream #${id}`;
-        send = (c) => c.cancel(id);
+        send = { fn: "cancel", args: [id] };
       } else if (kind === "renounce") {
         const ok = await confirmDialog({
           title: `Give up the right to cancel stream #${id}?`,
@@ -455,11 +471,11 @@
         });
         if (!ok) return;
         label = `Renounce stream #${id}`;
-        send = (c) => c.renounce(id);
+        send = { fn: "renounce", args: [id] };
         done = () => `Stream #${id} is now permanent: you can no longer cancel it. It keeps streaming to the recipient.`;
       } else {
         label = kind === "withdraw" ? `Withdraw from stream #${id}` : `Pay out stream #${id}`;
-        send = (c) => c.withdrawMax(id);
+        send = { fn: "withdrawMax", args: [id] };
         done = (rc) => {
           const ev = eventIn(rc, "Withdrawn");
           const amt = ev ? `${fmtRate(ev.args.amount)} zkLTC` : "The streamed amount";
@@ -693,7 +709,7 @@
       if (!ready || !p.recipient) return;
       submit.disabled = true;
       result.replaceChildren();
-      const rc = await sendTx("Create stream", (c) => c.createStream(p.recipient, p.start, p.duration, p.cancelable, { value: p.deposit }));
+      const rc = await sendTx("Create stream", { fn: "createStream", args: [p.recipient, p.start, p.duration, p.cancelable], value: p.deposit });
       if (rc) {
         let id = null;
         for (const log of rc.logs) {
