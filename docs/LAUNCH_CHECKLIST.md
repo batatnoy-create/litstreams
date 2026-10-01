@@ -10,13 +10,13 @@ Everything below needs a human: logins, forms, posts. The copy and images are re
 - [x] (2026-10-01: the card shows correctly on X.) Paste the site URL into an X post draft (do not send) and check that the preview card shows `og-image.png`. If it does not, try the [X Card Validator](https://cards-dev.twitter.com/validator) or wait a few minutes for the cache.
 
 ## 3. Submit to the LitVM directory
-- [ ] Open https://testnet.litvm.com → **Submit Your App**.
-- [ ] Fill it in from `docs/LISTING.md` → *Form copy* (name, tagline, category **Payments**, description, links, tags).
+- [x] Open https://testnet.litvm.com → **Submit Your App**. (Submitted 2026-10-02; @DrZuler messaged on Telegram and reacted.)
+- [x] Fill it in from `docs/LISTING.md` → *Form copy* (name, tagline, category **Payments**, description, links, tags).
 - [ ] Upload `web/assets/logo-512.png` as the logo and `web/assets/og-image.png` as the cover, if the form asks.
-- [ ] Submit and note the date here: ____
+- [x] Submit and note the date here: 2026-10-02
 
 ## 4. X (Twitter)
-- [ ] Optional project account: profile picture `web/assets/logo-512.png`, header `web/assets/x-banner-1500x500.png`, bio: *Get paid in hard money, every second. Per-second zkLTC streaming on LitVM (testnet).* + the site link.
+- [x] Project account @LitStreamsGo (logo, banner, bio, link); post #1 published. Optional project account: profile picture `web/assets/logo-512.png`, header `web/assets/x-banner-1500x500.png`, bio: *Get paid in hard money, every second. Per-second zkLTC streaming on LitVM (testnet).* + the site link.
 - [ ] Record the demo video (`docs/DEMO_SCRIPT.md`).
 - [ ] Post the 5 drafts from `docs/LISTING.md`, one per day or as a thread. Refresh the numbers in post #4 first.
 
