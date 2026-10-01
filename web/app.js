@@ -380,7 +380,7 @@
   }
 
   /** Runs a transaction with pending / success / error feedback. Returns the receipt or null. */
-  async function sendTx(label, send) {
+  async function sendTx(label, send, done) {
     const write = await getWrite();
     if (!write) return null;
     const t = toast("pending", `${label}: confirm in your wallet…`);
@@ -389,12 +389,24 @@
       setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(tx.hash));
       const rc = await tx.wait();
       if (!rc || rc.status !== 1) throw new Error("Transaction reverted");
-      setToast(t, "success", `${label}: done.`, txUrl(tx.hash));
+      setToast(t, "success", done ? done(rc) : `${label}: done.`, txUrl(tx.hash));
       return rc;
     } catch (e) {
       setToast(t, "error", humanError(e));
       return null;
     }
+  }
+
+  /** Returns the first event with this name emitted by the LitStreams contract in a receipt, or null. */
+  function eventIn(rc, name) {
+    for (const log of rc.logs) {
+      if (log.address.toLowerCase() !== cfg.contractAddress.toLowerCase()) continue;
+      try {
+        const ev = state.read.interface.parseLog(log);
+        if (ev && ev.name === name) return ev;
+      } catch { /* other event */ }
+    }
+    return null;
   }
 
   /* ---------- shared stream actions (Withdraw / Pay out / Cancel / Renounce) ---------- */
@@ -406,7 +418,8 @@
     const withdraw = mk("btn-primary", "Withdraw", "withdraw");
     const pay = mk("btn-primary", "Pay out now", "pay");
     const cancel = mk("btn-danger", "Cancel stream", "cancel");
-    const renounce = mk("", "Renounce cancel", "renounce");
+    const renounce = mk("", "Give up cancel right", "renounce");
+    renounce.title = "Makes the stream permanent. It does NOT stop the stream.";
     const el = h("div", { class: "actions" }, withdraw, pay, cancel, renounce);
     const all = [withdraw, pay, cancel, renounce];
 
@@ -417,6 +430,7 @@
       const now = nowSec();
       let send;
       let label;
+      let done;
       if (kind === "cancel") {
         const ok = await confirmDialog({
           title: `Cancel stream #${id}?`,
@@ -430,21 +444,27 @@
       } else if (kind === "renounce") {
         const ok = await confirmDialog({
           title: `Give up the right to cancel stream #${id}?`,
-          body: "After this the whole deposit goes to the recipient over time and you can never take it back. This cannot be undone.",
-          confirm: "Renounce",
+          body: "This does NOT stop the stream: it keeps flowing to the recipient exactly as before. You just lose the ability to cancel it, so the whole deposit will go to the recipient and you can never take it back. To stop a stream, use “Cancel stream” instead. This cannot be undone.",
+          confirm: "Give up cancel right",
           danger: true,
         });
         if (!ok) return;
         label = `Renounce stream #${id}`;
         send = (c) => c.renounce(id);
+        done = () => `Stream #${id} is now permanent: you can no longer cancel it. It keeps streaming to the recipient.`;
       } else {
         label = kind === "withdraw" ? `Withdraw from stream #${id}` : `Pay out stream #${id}`;
         send = (c) => c.withdrawMax(id);
+        done = (rc) => {
+          const ev = eventIn(rc, "Withdrawn");
+          const amt = ev ? `${fmt(ev.args.amount, 6)} zkLTC` : "The streamed amount";
+          return `${amt} sent to the recipient (${shortAddr(s.recipient)}). The stream keeps running, so new money accrues every second.`;
+        };
       }
       busy = true;
       for (const b of all) b.disabled = true;
       try {
-        if (await sendTx(label, send)) await ctx.after();
+        if (await sendTx(label, send, done)) await ctx.after();
       } finally {
         busy = false;
         for (const b of all) b.disabled = false;
@@ -728,15 +748,17 @@
     const hero = counter(false);
     const bar = progressBar();
     const party = h("span", { class: "sc-party" });
+    const lock = h("span", { class: "badge locked", title: "The sender gave up the right to cancel" }, "Non-cancelable");
     const v = {};
     const kv = (key, label) => { v[key] = h("b"); return h("div", null, h("span", null, label), v[key]); };
     const actions = buildActions({ get: () => s, after: ctx.after });
     const el = h("div", { class: "card stream-card" },
-      h("div", { class: "sc-top" }, h("a", { class: "sc-id", href: `#/stream/${id}` }, `#${id}`), badge.el, party),
+      h("div", { class: "sc-top" }, h("a", { class: "sc-id", href: `#/stream/${id}` }, `#${id}`), badge.el, lock, party),
       h("div", { class: "hero" }, h("div", { class: "hero-label" }, out ? "Streamed so far" : "Available to withdraw"), hero.el),
       bar.el,
       h("div", { class: "kv" },
-        kv("deposit", "Deposit"), kv("withdrawn", out ? "Paid out" : "Withdrawn"),
+        kv("deposit", "Deposit"), kv("withdrawn", out ? "Paid out so far" : "Withdrawn so far"),
+        kv("ready", out ? "Ready to pay out" : "Available now"),
         kv("rest", out ? "You can take back" : "Still to stream"),
         kv("start", "Start"), kv("end", "End"), kv("cancelable", "Cancelable")),
       actions.el);
@@ -754,7 +776,7 @@
           setText(v.end, fmtDate(s.endTime));
         }
         setText(v.deposit, `${fmt(s.deposit)} zkLTC`);
-        setText(v.withdrawn, `${fmt(s.withdrawn)} zkLTC`);
+        setText(v.withdrawn, `${fmt(s.withdrawn, 6)} zkLTC`);
       },
       tick(ms) {
         const now = Math.floor(ms / 1000);
@@ -762,6 +784,8 @@
         const avail = streamed > s.withdrawn ? streamed - s.withdrawn : 0n;
         const label = statusLabel(s, now);
         badge.set(label);
+        lock.hidden = s.cancelable || s.canceled;
+        setText(v.ready, `${fmt(avail, 6)} zkLTC`);
         hero.set(out ? streamed : avail);
         bar.set(s, streamed, label === "Streaming");
         const refundable = refundableAt(s, now);
