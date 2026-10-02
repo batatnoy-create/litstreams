@@ -37,7 +37,7 @@ Per-second zkLTC payment streams on LitVM: lock once, the recipient gets paid ev
 
 Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png` or a screen recording where it says so.
 
-**1. The problem**
+**1. The problem** *(posted and pinned 2026-10-02)*
 
 > Payday is a 30-day loan to your employer.
 >
@@ -46,29 +46,33 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 > Building LitStreams on @litecoinvm: per-second zkLTC payment streams. Testnet is live 👇
 > https://litstreams.site/
 
-**2. How it works**
+**2. How it works** *(posted 2026-10-02 as a reply to #1, forming a thread)*
 
 > How LitStreams works:
 >
 > 1. Lock zkLTC for a recipient, pick a duration
 > 2. Their balance grows every second
 > 3. They withdraw whenever they want
-> 4. Cancelable? The sender can stop it and take back only the unstreamed part
+> 4. Cancelable? The sender can stop it and reclaim the unstreamed part
 >
-> No admin. No fees. No token. One verified contract on LitVM.
+> No admin. No fees. No token. One verified contract on @litecoinvm.
 
 **3. The demo** *(attach the 60–90 s screen recording from DEMO_SCRIPT.md)*
 
-> 10-minute demo stream on LitVM testnet: watch the counter tick, withdraw mid-stream, cancel a second stream and get the rest back. All on chain, all native zkLTC.
+> A 10-minute stream on @litecoinvm testnet, start to finish:
+>
+> The counter ticks every second, the recipient withdraws mid-stream, a second stream gets canceled and the rest goes back.
+>
+> All on chain, all native zkLTC.
 >
 > Try it: https://litstreams.site/
 
 **4. Testnet stats** *(update the numbers before posting)*
 
 > LitStreams testnet so far:
-> • contract verified on the LiteForge explorer
-> • 68 tests (unit, fuzz, invariant), 100% line and branch coverage
-> • 7 on-chain streams covering every path: pay out, withdraw, cancel, cancel-before-start, renounce
+> - contract verified on the LiteForge explorer
+> - 68 tests + 180,000 fuzz runs, 100% coverage
+> - 11 on-chain streams covering every path: pay out, withdraw, cancel, renounce
 >
 > Next: an external audit before anything touches mainnet.
 
@@ -76,7 +80,7 @@ Replace the link if you rename the Netlify site. Attach `web/assets/og-image.png
 
 > Get paid in hard money, every second ⚡
 >
-> Grab testnet zkLTC from the LiteForge faucet, open LitStreams, and stream some to a friend. Share the stream link and they can watch it grow, no wallet needed.
+> Grab testnet zkLTC from the LiteForge faucet, open LitStreams and stream some to a friend. Share the stream link and they can watch it grow, no wallet needed.
 >
 > https://litstreams.site/
 >
