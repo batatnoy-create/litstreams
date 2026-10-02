@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#06080b">
-  <title>LitStreams: per-second zkLTC streaming on LitVM</title>
-  <meta name="description" content="Get paid in hard money, every second. Per-second zkLTC payment streaming on the LitVM LiteForge testnet.">
-  <meta property="og:title" content="LitStreams: get paid in hard money, every second">
-  <meta property="og:description" content="Per-second zkLTC payment streaming on LitVM. Testnet only.">
+  <title>LitStreams — Continuous zkLTC Payments on LitVM</title>
+  <meta name="description" content="Stream zkLTC continuously over time with LitStreams, a payment application built for the LitVM ecosystem.">
+  <meta property="og:title" content="LitStreams — Continuous zkLTC Payments on LitVM">
+  <meta property="og:description" content="Stream zkLTC continuously over time with LitStreams, a payment application built for the LitVM ecosystem. Testnet only.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://litstreams.site/">
   <meta property="og:image" content="https://litstreams.site/assets/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="LitStreams: get paid in hard money, every second">
-  <meta name="twitter:description" content="Per-second zkLTC payment streaming on LitVM. Testnet only.">
+  <meta name="twitter:title" content="LitStreams — Continuous zkLTC Payments on LitVM">
+  <meta name="twitter:description" content="Stream zkLTC continuously over time with LitStreams, a payment application built for the LitVM ecosystem. Testnet only.">
   <meta name="twitter:image" content="https://litstreams.site/assets/og-image.png">
   <link rel="apple-touch-icon" href="assets/logo-512.png">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
@@ -28,6 +28,7 @@
         <img src="assets/logo.svg" alt="" width="30" height="30">
         <span>Lit<b>Streams</b></span>
       </a>
+      <a class="eco-badge" href="https://litvm.com" target="_blank" rel="noopener noreferrer" title="An independent application built on LitVM">Built on LitVM</a>
       <nav id="nav" aria-label="Main">
         <a href="#/create" data-route="create"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Create</span></a>
         <a href="#/outgoing" data-route="outgoing"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg><span>Outgoing</span></a>
@@ -49,8 +50,11 @@
   <dialog id="dialog" aria-modal="true"></dialog>
 
   <footer class="footer">
-    <span>LitStreams on LitVM LiteForge testnet (chain 4441)</span>
-    <span id="footer-contract"></span>
+    <div class="footer-top">
+      <span>LitStreams · an independent ecosystem application built on LitVM</span>
+      <div id="footer-links" class="footer-links"></div>
+    </div>
+    <p class="footer-note">LitStreams is currently running on LitVM testnet. This application is experimental and unaudited. Do not use funds you cannot afford to lose.</p>
   </footer>
 
   <script src="config.js"></script>

@@ -221,7 +221,7 @@
   function setToast(el, kind, message, href) {
     el.className = `toast ${kind}`;
     const kids = [h("button", { type: "button", class: "x", "aria-label": "Dismiss", onclick: () => el.remove() }, "×"), message];
-    if (href) kids.push(" ", h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "View on explorer"));
+    if (href) kids.push(" ", h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "View transaction"));
     el.replaceChildren(...kids);
     clearTimeout(el._t);
     if (kind !== "pending" && kind !== "warn") el._t = setTimeout(() => el.remove(), kind === "error" ? 25000 : 12000);
@@ -230,15 +230,23 @@
   function confirmDialog({ title, body, confirm = "Confirm", danger = false }) {
     return new Promise((resolve) => {
       const d = $("#dialog");
-      d.returnValue = "";
+      let settled = false;
+      // Resolve straight from the buttons: the dialog's "close" event is queued and can arrive late
+      // (or not at all in a background tab), which must never leave an action hanging.
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (d.open) d.close();
+        resolve(ok);
+      };
       d.replaceChildren(
         h("h2", null, title),
         h("p", null, body),
         h("div", { class: "dialog-actions" },
-          h("button", { type: "button", class: "btn", onclick: () => d.close("no") }, "Not now"),
-          h("button", { type: "button", class: `btn ${danger ? "btn-danger-solid" : "btn-primary"}`, onclick: () => d.close("ok") }, confirm)),
+          h("button", { type: "button", class: "btn", onclick: () => finish(false) }, "Not now"),
+          h("button", { type: "button", class: `btn ${danger ? "btn-danger-solid" : "btn-primary"}`, onclick: () => finish(true) }, confirm)),
       );
-      d.addEventListener("close", () => resolve(d.returnValue === "ok"), { once: true });
+      d.addEventListener("close", () => finish(false), { once: true }); // Esc or any other way of closing
       d.showModal();
     });
   }
@@ -318,12 +326,14 @@
       toast("error", "No wallet found. Open this page in your wallet's browser (MetaMask, Rabby) or install a wallet extension, then reload.");
       return;
     }
+    const t = toast("pending", "Connecting wallet…");
     try {
       await eth.request({ method: "eth_requestAccounts" });
       await syncWallet();
+      t.remove();
       onWalletChanged();
     } catch (e) {
-      toast("error", humanError(e));
+      setToast(t, "error", humanError(e));
     }
   }
 
@@ -426,7 +436,7 @@
    */
   async function sendTx(label, call, done) {
     if (!(await ensureWallet())) return { rc: null, hash: null, unknown: false };
-    const t = toast("pending", `${label}: preparing…`);
+    const t = toast("pending", `${label}: preparing transaction…`);
     let hash = null;
     let nonce = null;
     try {
@@ -446,7 +456,7 @@
         return { rc: null, hash: null, unknown: false };
       }
       nonce = await state.rpc.getTransactionCount(state.account, "pending");
-      setToast(t, "pending", `${label}: confirm in your wallet…`);
+      setToast(t, "pending", `${label}: waiting for signature in your wallet…`);
       hash = await injected().request({
         method: "eth_sendTransaction",
         params: [{
@@ -460,7 +470,7 @@
           chainId: CHAIN.chainId, // wallets reject the request if they are on another network
         }],
       });
-      setToast(t, "pending", `${label}: waiting for confirmation…`, txUrl(hash));
+      setToast(t, "pending", `${label}: transaction submitted (${shortAddr(hash)}). Waiting for confirmation…`, txUrl(hash));
       const rc = await waitReceipt(hash);
       if (!rc) {
         setToast(t, "warn", `${label}: sent, but not confirmed yet. Open it in the explorer before you try again.`, txUrl(hash));
@@ -859,7 +869,8 @@
       update();
       result.replaceChildren();
       try {
-        const res = await sendTx("Create stream", { fn: "createStream", args: [p.recipient, p.start, p.duration, p.cancelable], value: p.deposit });
+        const res = await sendTx("Create stream", { fn: "createStream", args: [p.recipient, p.start, p.duration, p.cancelable], value: p.deposit },
+          (rc) => { const ev = eventIn(rc, "StreamCreated"); return ev ? `Stream #${ev.args.id} created successfully.` : "Stream created successfully."; });
         if (res.rc) showCreated(res.rc);
         else if (res.unknown) showUnknown({ hash: res.hash, nonce: res.nonce, account: state.account });
       } finally {
@@ -874,7 +885,7 @@
     }
 
     root.append(
-      pageHead("Stream money by the second", "Lock zkLTC for one recipient. It unlocks linearly, every second, until the end time. Get paid in hard money, every second."),
+      pageHead("Continuous payments on LitVM", "Stream zkLTC to one recipient over time. The balance unlocks every second until the end time: programmable payments without recurring manual transfers."),
       h("div", { class: "grid-2" },
         h("div", { class: "card" },
           h("div", { class: "field" }, h("label", { for: "recipient" }, "Recipient address"), recipient),
@@ -1035,8 +1046,8 @@
       emptyEl.hidden = !(noneYet || allHidden);
       if (noneYet) {
         emptyEl.replaceChildren(icon(out ? ICONS.out : ICONS.in),
-          h("h2", null, out ? "No outgoing streams yet" : "No incoming streams yet"),
-          h("p", null, out ? "Create your first stream in a few seconds." : "When someone streams zkLTC to your address, it shows up here."),
+          h("h2", null, out ? "No active streams yet" : "No incoming streams"),
+          h("p", null, out ? "Create your first stream to start sending zkLTC continuously." : "You'll see active streams sent to this wallet here."),
           out ? h("a", { class: "btn btn-primary", href: "#/create" }, "Create a stream") : null);
       } else if (allHidden) {
         emptyEl.replaceChildren(icon(ICONS.search), h("h2", null, "Everything here is dust"),
@@ -1303,8 +1314,25 @@
           risk("Spam streams. ", "Anyone can create tiny streams to any address. The lists on this site hide “dust” (under 0.0001 zkLTC) by default, and tell you if a hidden stream still holds money for you."),
           risk("Where payouts show up. ", "A withdrawal or payout is sent by the contract inside a transaction, as an “internal transfer”. Your balance goes up right away, but many wallets only list transactions you signed yourself. On the explorer, look at your address under “Internal txns”."),
           risk("Trust assumptions. ", "LitVM uses an AnyTrust data layer and a bridge, which add their own trust assumptions. The LitStreams contract itself has no owner, no admin, no pause, no upgrades and no fees."))),
-      h("p", { class: "hint", style: "margin-top:1rem" }, "Contract: ", addrLink(cfg.contractAddress), " (source verified on the explorer)."),
+      protocolDetails(),
     );
+  }
+
+  /** Technical facts for people who want to verify; collapsed so it does not overwhelm everyone else. */
+  function protocolDetails() {
+    const ext = (href, text) => h("a", { href, target: "_blank", rel: "noopener noreferrer" }, text);
+    const row = (k, ...v) => [h("dt", null, k), h("dd", null, ...v)];
+    return h("details", { class: "card protocol" },
+      h("summary", null, "Protocol details"),
+      h("p", { class: "muted" }, "LitStreams uses a smart contract to control the release of funds over time. The contract has no owner: nobody, including its author, can pause it, change its rules or take funds that belong to a stream."),
+      h("dl", { class: "dl" },
+        row("Network", "LitVM LiteForge testnet"),
+        row("Chain ID", h("span", { class: "mono" }, String(cfg.chainId))),
+        row("Token", "Native zkLTC (18 decimals)"),
+        row("Contract", h("span", { class: "mono break" }, cfg.contractAddress)),
+        row("Source", ext(`${cfg.explorer}/address/${cfg.contractAddress}?tab=contract`, "Verified on the explorer"), " · ", ext(cfg.repoUrl, "GitHub")),
+        row("Explorer", ext(cfg.explorer, cfg.explorer.replace(/^https:\/\//, ""))),
+        row("Audit", "Not audited yet. Testnet only.")));
   }
 
   /* ---------- boot ---------- */
@@ -1320,7 +1348,12 @@
     state.rpc = new ethers.JsonRpcProvider(cfg.rpcUrl, cfg.chainId, { staticNetwork: true });
     state.read = new ethers.Contract(cfg.contractAddress, state.abi, state.rpc);
 
-    $("#footer-contract").replaceChildren("Contract ", addrLink(cfg.contractAddress));
+    const ext = (href, text) => h("a", { href, target: "_blank", rel: "noopener noreferrer" }, text);
+    $("#footer-links").replaceChildren(
+      ext(cfg.litvmUrl, "LitVM"),
+      ext(cfg.explorer, "Explorer"),
+      ext(cfg.repoUrl, "GitHub"),
+      h("span", null, "Contract ", addrLink(cfg.contractAddress)));
     $("#connect-btn").addEventListener("click", onWalletClick);
 
     const eth = injected();
