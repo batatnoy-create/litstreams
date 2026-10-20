@@ -13,7 +13,7 @@ Everything below needs a human: logins, forms, posts. The copy and images are re
 - [x] Open https://testnet.litvm.com → **Submit Your App**. (Submitted 2026-10-02; @DrZuler messaged on Telegram and reacted.)
 - [x] Fill it in from `docs/LISTING.md` → *Form copy* (name, tagline, category **Payments**, description, links, tags).
 - [ ] Upload `web/assets/logo-512.png` as the logo and `web/assets/og-image.png` as the cover, if the form asks.
-- [x] Submit and note the date here: 2026-10-02
+- [x] Submit and note the date here: 2026-10-02 — **listed 2026-10-20 under PAYMENTS**
 
 ## 4. X (Twitter)
 - [x] Project account @LitStreamsGo (logo, banner, bio, link); post #1 published. Optional project account: profile picture `web/assets/logo-512.png`, header `web/assets/x-banner-1500x500.png`, bio: *Get paid in hard money, every second. Per-second zkLTC streaming on LitVM (testnet).* + the site link.
